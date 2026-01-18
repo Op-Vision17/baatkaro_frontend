@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "134097653278",
+    "project_id": "baatkaro-283f1",
+    "storage_bucket": "baatkaro-283f1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:134097653278:android:adac64bfecd7419523a80f",
+        "android_client_info": {
+          "package_name": "com.example.baatkaro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCXcuZfT67GPbEj99SxANliwrMdufHdgQs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
