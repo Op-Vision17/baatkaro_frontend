@@ -38,6 +38,19 @@ class _CallScreenState extends ConsumerState<CallScreen> {
 
   Future<void> _initializeAgora() async {
     try {
+      final appId = AppConstants.agoraAppId;
+
+      if (appId.isEmpty) {
+        debugPrint('❌ AGORA_APP_ID is missing from .env file');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Configuration Error: App ID missing'),
+            ),
+          );
+        }
+        return;
+      }
       final callState = ref.read(callControllerProvider);
 
       if (callState.agoraToken == null ||
@@ -55,7 +68,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
       _engine = createAgoraRtcEngine();
       await _engine!.initialize(
         RtcEngineContext(
-          appId: AppConstants.agoraAppId, // ✅ Use the constant
+          appId: appId, // ✅ Use the constant
           channelProfile: ChannelProfileType.channelProfileCommunication,
         ),
       );

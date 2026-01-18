@@ -1,9 +1,11 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 class AppConstants {
   // Base URLs
   static const String baseUrl = 'https://api.visiontrix.me';
   static const String socketUrl = 'https://api.visiontrix.me';
 
-  static const String agoraAppId = 'd319dc57c2384eb2b480433e3d8926c0';
+static String get agoraAppId => dotenv.env['AGORA_APP_ID'] ?? '';
 
   // Auth API Endpoints
   static const String sendOtpEndpoint = '/api/auth/send-otp';
