@@ -387,23 +387,51 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         return;
       }
 
-      // ✅ CRITICAL FIX: Add .then() to refresh listener when returning
+      final callStartTime = DateTime.now();
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📞 NAVIGATING TO CALL SCREEN');
+      print('   Room: ${widget.roomId}');
+      print('   Call Type: $callType');
+      print('   Start Time: ${callStartTime.toIso8601String()}');
+      print(
+        '   Messages in State: ${ref.read(chatControllerProvider(widget.roomId)).messages.length}',
+      );
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => CallScreen(call: callState.currentCall!),
           fullscreenDialog: true,
         ),
-      ).then((_) {
-        // ✅ THIS IS THE KEY FIX: Refresh listener after returning from call
+      ).then((_) async {
+        // ✅ Make it async
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        print('🔄 Returned from call - refreshing socket listener');
+        print('🔄 Returned from call - forcing room reconnect');
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        // Force re-initialize the chat controller
+        // ✅ SIMPLE FIX: Force socket to disconnect and reconnect
+        final socketController = ref.read(socketControllerProvider.notifier);
+
+        // Disconnect
+        socketController.disconnect();
+        print('   🔌 Socket disconnected');
+
+        // Wait a moment
+        await Future.delayed(Duration(milliseconds: 300));
+
+        // Reconnect
+        await socketController.connect();
+        print('   ✅ Socket reconnected');
+
+        // Wait for connection to stabilize
+        await Future.delayed(Duration(milliseconds: 300));
+
+        // Invalidate to reload chat
         ref.invalidate(chatControllerProvider(widget.roomId));
 
         print('✅ Chat controller invalidated and will re-initialize');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       });
     } catch (e) {
       if (mounted) _showErrorSnackBar('Failed to start call: $e');
@@ -444,26 +472,140 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _showErrorSnackBar('Call not found');
         return;
       }
+      final joinStartTime = DateTime.now();
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📞 JOINING CALL SCREEN');
+      print('   Room: ${widget.roomId}');
+      print('   Call ID: $callId');
+      print('   Join Time: ${joinStartTime.toIso8601String()}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // ✅ CRITICAL FIX: Add .then() here too
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => CallScreen(call: callState.currentCall!),
           fullscreenDialog: true,
         ),
-      ).then((_) {
-        // ✅ Refresh listener after returning from call
+      ).then((_) async {
+        // ✅ Make it async
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        print('🔄 Returned from joined call - refreshing socket listener');
+        print('🔄 Returned from joined call - forcing room reconnect');
         print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        final socketController = ref.read(socketControllerProvider.notifier);
+        socketController.disconnect();
+        print('   🔌 Socket disconnected');
+
+        await Future.delayed(Duration(milliseconds: 300));
+
+        await socketController.connect();
+        print('   ✅ Socket reconnected');
+
+        await Future.delayed(Duration(milliseconds: 300));
 
         ref.invalidate(chatControllerProvider(widget.roomId));
 
         print('✅ Chat controller invalidated and will re-initialize');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       });
     } catch (e) {
       if (mounted) _showErrorSnackBar('Failed to join call: $e');
+    }
+  }
+
+    Future<void> _joinCallFromMessage(String callId) async {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('📞 JOIN CALL FROM MESSAGE');
+    print('   Call ID: $callId');
+    print('   Room ID: ${widget.roomId}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    try {
+      // Check if already in a call
+      final myActiveCall = ref.read(myActiveCallProvider);
+      if (myActiveCall != null) {
+        _showErrorSnackBar('Already in a call');
+        return;
+      }
+
+      // Check socket connection
+      final socketState = ref.read(socketControllerProvider);
+      if (!socketState.isConnected) {
+        await ref.read(socketControllerProvider.notifier).ensureConnected();
+        await Future.delayed(Duration(milliseconds: 500));
+        
+        final newSocketState = ref.read(socketControllerProvider);
+        if (!newSocketState.isConnected) {
+          _showErrorSnackBar('Connection error. Please try again.');
+          return;
+        }
+      }
+
+      // Request permissions (audio only for call messages)
+      final hasPermissions = await PermissionService.requestCallPermissions(
+        isVideoCall: false,
+      );
+      
+      if (!hasPermissions) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Microphone permission required'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: () => PermissionService.openAppSettings(),
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Join the call
+      await ref.read(callControllerProvider.notifier).joinCall(
+        widget.roomId,
+        callId,
+      );
+
+      if (!mounted) return;
+
+      final callState = ref.read(callControllerProvider);
+      if (callState.error != null) {
+        _showErrorSnackBar('Failed to join call: ${callState.error}');
+        return;
+      }
+
+      if (callState.currentCall == null) {
+        _showErrorSnackBar('Call not found');
+        return;
+      }
+
+      print('✅ Navigating to call screen...');
+
+      // Navigate to call screen
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CallScreen(call: callState.currentCall!),
+          fullscreenDialog: true,
+        ),
+      ).then((_) async {
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('🔄 Returned from call - reconnecting...');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        final socketController = ref.read(socketControllerProvider.notifier);
+        socketController.disconnect();
+        await Future.delayed(Duration(milliseconds: 300));
+        await socketController.connect();
+        await Future.delayed(Duration(milliseconds: 300));
+        ref.invalidate(chatControllerProvider(widget.roomId));
+
+        print('✅ Reconnection complete');
+      });
+    } catch (e) {
+      if (mounted) {
+        _showErrorSnackBar('Failed to join call: $e');
+      }
     }
   }
 
@@ -1117,6 +1259,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                       : null,
                                   onDelete: isMe && message.canBeDeleted
                                       ? () => _deleteMessage(message.id)
+                                      : null,
+                                  // ✅ NEW: Handle call message tap
+                                  onCallTap: message.isCallMessage && 
+                                             message.callData?.isOngoing == true
+                                      ? () => _joinCallFromMessage(message.callData!.callId)
                                       : null,
                                 ),
                               ],

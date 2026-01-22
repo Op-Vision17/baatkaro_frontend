@@ -1,5 +1,6 @@
 // features/chats/presentation/widgets/chat/message_bubble.dart
 
+import 'package:baatkaro/features/calls/presentation/widgets/call_message_bubble.dart';
 import 'package:baatkaro/features/chats/data/models/message_model.dart';
 import 'package:baatkaro/features/chats/presentation/widgets/chat/voice_message_bubble.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -12,7 +13,8 @@ class MessageBubble extends StatelessWidget {
   final bool isMe;
   final bool showUsername;
   final VoidCallback? onImageTap;
-  final VoidCallback? onDelete; // ✅ NEW: Delete callback
+  final VoidCallback? onDelete;
+  final VoidCallback? onCallTap; // ✅ NEW: For joining ongoing calls
 
   const MessageBubble({
     Key? key,
@@ -20,7 +22,8 @@ class MessageBubble extends StatelessWidget {
     required this.isMe,
     this.showUsername = false,
     this.onImageTap,
-    this.onDelete, // ✅ NEW
+    this.onDelete,
+    this.onCallTap, // ✅ NEW
   }) : super(key: key);
 
   String _formatTime(DateTime time) {
@@ -42,7 +45,6 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  // ✅ NEW: Show delete dialog
   void _showDeleteDialog(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -98,7 +100,7 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // ✅ NEW: Handle deleted messages
+    // ✅ Handle deleted messages
     if (message.isDeleted) {
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -139,6 +141,16 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
+    // ✅ NEW: Handle call messages
+    if (message.isCallMessage) {
+      return CallMessageBubble(
+        message: message,
+        isMe: isMe,
+        onTap: onCallTap,
+      );
+    }
+
+    // ✅ EXISTING: Regular message bubbles (text, image, voice)
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
@@ -172,7 +184,6 @@ class MessageBubble extends StatelessWidget {
           // Message content
           Flexible(
             child: GestureDetector(
-              // ✅ NEW: Long press to delete (only for own messages)
               onLongPress: isMe && message.canBeDeleted
                   ? () => _showDeleteDialog(context)
                   : null,

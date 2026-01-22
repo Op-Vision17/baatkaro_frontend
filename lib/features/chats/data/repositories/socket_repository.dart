@@ -15,6 +15,10 @@ class SocketRepository {
   final List<Map<String, dynamic>> _pendingMessages = [];
   bool _isSendingPending = false;
 
+  // ✅ ADD THESE THREE LINES:
+  Function(Map<String, dynamic>)? _messageCallback;
+  bool _messageListenerRegistered = false;
+
   // Connection state callbacks
   Function()? onConnected;
   Function()? onDisconnected;
@@ -88,24 +92,25 @@ class SocketRepository {
   }
 
   void _setupSocketListeners() {
-_socket!.onConnect((_) {
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('✅ Socket connected successfully!');
-  print('   Socket ID: ${_socket!.id}');
-  print('   Transport: ${_socket!.io.engine?.transport?.name ?? "unknown"}');
-  
-  // ✅ ADD THIS: Re-join room after reconnect
-  if (_currentRoomId != null) {
-    print('🔄 Re-joining room after reconnect: $_currentRoomId');
-    Future.delayed(Duration(milliseconds: 100), () {
-      joinRoom(_currentRoomId!);
-    });
-  }
-  
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  onConnected?.call();
-});
+    _socket!.onConnect((_) {
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('✅ Socket connected successfully!');
+      print('   Socket ID: ${_socket!.id}');
+      print(
+        '   Transport: ${_socket!.io.engine?.transport?.name ?? "unknown"}',
+      );
 
+      // ✅ ADD THIS: Re-join room after reconnect
+      if (_currentRoomId != null) {
+        print('🔄 Re-joining room after reconnect: $_currentRoomId');
+        Future.delayed(Duration(milliseconds: 100), () {
+          joinRoom(_currentRoomId!);
+        });
+      }
+
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      onConnected?.call();
+    });
 
     _socket!.onConnectError((data) {
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -124,27 +129,27 @@ _socket!.onConnect((_) {
       onDisconnected?.call();
     });
 
-_socket!.onReconnect((attempt) {
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('🔄 Socket reconnected!');
-  print('   After attempts: $attempt');
-  
-  // ✅ ADD THIS: Re-join room after reconnect
-  if (_currentRoomId != null) {
-    print('🔄 Re-joining room: $_currentRoomId');
-    Future.delayed(Duration(milliseconds: 100), () {
-      joinRoom(_currentRoomId!);
-    });
-  }
-  
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    _socket!.onReconnect((attempt) {
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔄 Socket reconnected!');
+      print('   After attempts: $attempt');
 
-  // Send pending messages after reconnection
-  if (_pendingMessages.isNotEmpty) {
-    print('📤 Sending ${_pendingMessages.length} pending messages...');
-    _sendPendingMessages();
-  }
-});
+      // ✅ ADD THIS: Re-join room after reconnect
+      if (_currentRoomId != null) {
+        print('🔄 Re-joining room: $_currentRoomId');
+        Future.delayed(Duration(milliseconds: 100), () {
+          joinRoom(_currentRoomId!);
+        });
+      }
+
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      // Send pending messages after reconnection
+      if (_pendingMessages.isNotEmpty) {
+        print('📤 Sending ${_pendingMessages.length} pending messages...');
+        _sendPendingMessages();
+      }
+    });
 
     _socket!.onReconnectAttempt((attempt) {
       print('🔄 Reconnection attempt #$attempt...');
@@ -193,24 +198,55 @@ _socket!.onReconnect((attempt) {
       throw Exception('Socket connection timeout');
     }
   }
-
-
-
-
-// REPLACE the existing joinRoom method (around line 150) with this:
 void joinRoom(String roomId) {
+  final joinTime = DateTime.now();
+  
+  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  print('📍 JOIN ROOM REQUEST');
+  print('   Room ID: $roomId');
+  print('   Time: ${joinTime.toIso8601String()}');
+  print('   Socket Exists: ${_socket != null}');
+  print('   Socket Connected: ${_socket?.connected}');
+  print('   Socket ID: ${_socket?.id}');
+  print('   Previous Room: $_currentRoomId');
+  
   if (_socket == null || !_socket!.connected) {
-    print('⚠️ Cannot join room - socket not connected');
+    print('❌ Cannot join room - socket not connected');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     return;
   }
 
-  // ✅ Store current room
+  // ✅ CRITICAL FIX: Client-side leave/rejoin to reset Socket.IO state
+  if (_currentRoomId == roomId) {
+    print('🔄 Same room - forcing client rejoin to reset state');
+    print('   Current room: $_currentRoomId');
+    
+    // Force client to leave current room
+    _socket!.emit('leaveRoom', roomId);
+    
+    // Small delay to ensure leave is processed
+    Future.delayed(Duration(milliseconds: 50), () {
+      // Now rejoin
+      _socket!.emit(AppConstants.joinRoomEvent, roomId);
+      print('✅ Forced rejoin completed for: $roomId');
+    });
+    
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    return;
+  }
+
+  final previousRoom = _currentRoomId;
   _currentRoomId = roomId;
 
+  print('✅ Emitting joinRoom event');
+  print('   From: ${previousRoom ?? 'none'}');
+  print('   To: $roomId');
+  
   _socket!.emit(AppConstants.joinRoomEvent, roomId);
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('📍 Joined room: $roomId');
+  
+  print('✅ joinRoom event emitted');
   print('   Socket ID: ${_socket!.id}');
+  print('   Timestamp: ${DateTime.now().toIso8601String()}');
   print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 
@@ -319,7 +355,6 @@ void joinRoom(String roomId) {
       'isTyping': isTyping,
     });
   }
-
 
   void startCall(String roomId, String callType) {
     if (_socket == null || !_socket!.connected) {
@@ -471,47 +506,82 @@ void joinRoom(String roomId) {
     });
   }
 
-void onReceiveMessage(Function(Map<String, dynamic>) callback) {
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('👂 Setting up receiveMessage listener');
-  print('   Event: ${AppConstants.receiveMessageEvent}');
-  print('   Socket ID: ${_socket?.id}');
-  print('   Connected: ${_socket?.connected}');
-  
-  // ✅ CRITICAL FIX: Remove old listener first!
-  _socket?.off(AppConstants.receiveMessageEvent);
-  print('   🧹 Cleared old listeners');
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-  _socket?.on(AppConstants.receiveMessageEvent, (data) {
+  void onReceiveMessage(Function(Map<String, dynamic>) callback) {
     print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('📩 SOCKET RECEIVED MESSAGE');
-    print('   Type: ${data.runtimeType}');
+    print('👂 SOCKET LISTENER REGISTRATION REQUEST');
+    print('   Already registered: $_messageListenerRegistered');
+    print('   Socket exists: ${_socket != null}');
+    print('   Socket connected: ${_socket?.connected}');
+
+    // ✅ CRITICAL FIX: Only register listener ONCE per socket connection
+    if (_messageListenerRegistered) {
+      print('⚠️ Listener already registered, updating callback only');
+      _messageCallback = callback;
+      print('✅ Callback updated successfully');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
+
+    print('📝 Registering NEW listener (first time for this socket)');
+    print('   Event: ${AppConstants.receiveMessageEvent}');
     print('   Socket ID: ${_socket?.id}');
     print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    try {
-      Map<String, dynamic> messageData;
+    // Store the callback
+    _messageCallback = callback;
 
-      if (data is Map<String, dynamic>) {
-        messageData = data;
-      } else if (data is Map) {
-        messageData = Map<String, dynamic>.from(data);
-      } else {
-        print('❌ Unexpected data type: ${data.runtimeType}');
-        return;
+    // Register the listener ONCE
+    _socket?.on(AppConstants.receiveMessageEvent, (data) {
+      final receiveTime = DateTime.now();
+
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('📨 SOCKET EVENT RECEIVED');
+      print('   Event: ${AppConstants.receiveMessageEvent}');
+      print('   Time: ${receiveTime.toIso8601String()}');
+      print('   Socket ID: ${_socket?.id}');
+      print('   Data Type: ${data.runtimeType}');
+      print('   Message Text: ${data is Map ? data['text'] : 'N/A'}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      try {
+        Map<String, dynamic> messageData;
+
+        if (data is Map<String, dynamic>) {
+          messageData = data;
+        } else if (data is Map) {
+          messageData = Map<String, dynamic>.from(data);
+        } else {
+          print('❌ UNEXPECTED DATA TYPE: ${data.runtimeType}');
+          print('   Raw Data: $data');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          return;
+        }
+
+        print('✅ Data validated, calling callback...');
+
+        // Call the CURRENT callback (which may have been updated)
+        if (_messageCallback != null) {
+          _messageCallback!(messageData);
+          print('✅ Callback completed successfully');
+        } else {
+          print('⚠️ No callback registered!');
+        }
+
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      } catch (e, stackTrace) {
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('❌ SOCKET LISTENER ERROR');
+        print('   Error: $e');
+        print('   Stack: $stackTrace');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       }
+    });
 
-      callback(messageData);
-    } catch (e, stackTrace) {
-      print('❌ Error in onReceiveMessage: $e');
-      print('Stack trace: $stackTrace');
-    }
-  });
-  
-  print('✅ receiveMessage listener registered');
-}
-
+    _messageListenerRegistered = true;
+    print('✅ Socket listener registered successfully (ONCE)');
+    print('   This listener will persist for the socket lifetime');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
 
   void onMessageDeleted(Function(Map<String, dynamic>) callback) {
     print('👂 Setting up messageDeleted listener');
@@ -536,6 +606,42 @@ void onReceiveMessage(Function(Map<String, dynamic>) callback) {
         callback(deleteData);
       } catch (e, stackTrace) {
         print('❌ Error in onMessageDeleted: $e');
+        print('Stack trace: $stackTrace');
+      }
+    });
+  }
+
+   void onMessageUpdated(Function(Map<String, dynamic>) callback) {
+    print('👂 Setting up messageUpdated listener');
+
+    _socket?.on('messageUpdated', (data) {
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      print('🔄 MESSAGE UPDATED EVENT');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      try {
+        Map<String, dynamic> updateData;
+
+        if (data is Map<String, dynamic>) {
+          updateData = data;
+        } else if (data is Map) {
+          updateData = Map<String, dynamic>.from(data);
+        } else {
+          print('❌ Unexpected data type: ${data.runtimeType}');
+          return;
+        }
+
+        print('   Message ID: ${updateData['_id']}');
+        print('   Message Type: ${updateData['messageType']}');
+        
+        if (updateData['callData'] != null) {
+          print('   Call Status: ${updateData['callData']['status']}');
+          print('   Call Duration: ${updateData['callData']['duration']}');
+        }
+
+        callback(updateData);
+      } catch (e, stackTrace) {
+        print('❌ Error in onMessageUpdated: $e');
         print('Stack trace: $stackTrace');
       }
     });
@@ -598,19 +704,25 @@ void onReceiveMessage(Function(Map<String, dynamic>) callback) {
     }
   }
 
-void disconnect() {
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('🔌 Disconnecting socket...');
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  void disconnect() {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🔌 Disconnecting socket...');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-  _currentRoomId = null; // ✅ ADD THIS LINE
-  _socket?.disconnect();
-  _socket?.dispose();
-  _socket = null;
-  _isConnecting = false;
+    _currentRoomId = null;
 
-  print('✅ Socket disconnected and disposed');
-}
+    // ✅ ADD THESE TWO LINES:
+    _messageListenerRegistered = false;
+    _messageCallback = null;
+
+    _socket?.disconnect();
+    _socket?.dispose();
+    _socket = null;
+    _isConnecting = false;
+
+    print('✅ Socket disconnected and disposed');
+  }
+
   void clearPendingMessages() {
     print('🧹 Clearing ${_pendingMessages.length} pending messages');
     _pendingMessages.clear();

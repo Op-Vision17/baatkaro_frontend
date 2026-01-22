@@ -65,8 +65,22 @@ class ChatController extends StateNotifier<ChatState> {
   final Ref _ref;
   bool _isDisposed = false;
   Timer? _typingTimer;
+  
+  // ✅ ADD THIS: Instance tracking
+  final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString();
+  static int _instanceCounter = 0;
+  final int _instanceNumber;
 
-  ChatController(this.roomId, this._ref) : super(ChatState()) {
+  ChatController(this.roomId, this._ref) : 
+    _instanceNumber = ++_instanceCounter,
+    super(ChatState()) {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🏗️ ChatController CREATED');
+    print('   Room: $roomId');
+    print('   Instance ID: $_instanceId');
+    print('   Instance Number: $_instanceNumber');
+    print('   Time: ${DateTime.now().toIso8601String()}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     _initialize();
   }
 
@@ -80,77 +94,104 @@ class ChatController extends StateNotifier<ChatState> {
       final socketController = _ref.read(socketControllerProvider.notifier);
       await socketController.connect();
 
-      // ✅ CRITICAL: Register listener FIRST, before joining room
-      print('👂 Setting up message listener BEFORE joining room...');
-      socketController.onReceiveMessage((data) {
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        print('📩 ChatController received message');
-        print('   Raw data: $data');
-        print('   Controller disposed: $_isDisposed');
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      // ✅ ENHANCED: Register listener FIRST, before joining room
+print('👂 Setting up message listener BEFORE joining room...');
+print('   Instance: $_instanceNumber ($_instanceId)');
+print('   Disposed: $_isDisposed');
 
-        if (_isDisposed) {
-          print('⏭️ Controller disposed, skipping');
-          return;
-        }
+socketController.onReceiveMessage((data) {
+  final receiveTime = DateTime.now();
+  
+  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  print('📩 MESSAGE RECEIVED BY ChatController');
+  print('   Instance Number: $_instanceNumber');
+  print('   Instance ID: $_instanceId');
+  print('   Receive Time: ${receiveTime.toIso8601String()}');
+  print('   Controller Disposed: $_isDisposed');
+  print('   Messages in State: ${state.messages.length}');
+  print('   Raw Data: $data');
+  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        try {
-          final messageRoomId = _extractRoomId(data['roomId']);
+  if (_isDisposed) {
+    print('❌ MESSAGE DROPPED - Controller Disposed!');
+    print('   Instance: $_instanceNumber was disposed');
+    print('   This message will be LOST!');
+    print('   Message Text: ${data['text']}');
+    print('   Sender: ${data['sender']?['name']}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    return;
+  }
 
-          print('🔍 Room ID comparison:');
-          print('   Extracted message roomId: $messageRoomId');
-          print('   Current roomId: $roomId');
-          print('   Match: ${messageRoomId == roomId}');
+  try {
+    final messageRoomId = _extractRoomId(data['roomId']);
 
-          if (messageRoomId != null && messageRoomId != roomId) {
-            print('⏭️ Message for different room, skipping');
-            return;
-          }
+    print('🔍 Room Validation:');
+    print('   Message Room: $messageRoomId');
+    print('   This Controller Room: $roomId');
+    print('   Match: ${messageRoomId == roomId}');
 
-          print('✅ Message is for this room, parsing...');
-          final newMessage = Message.fromJson(data);
-          print(
-            '✅ Message parsed: id=${newMessage.id}, text="${newMessage.text}"',
-          );
+    if (messageRoomId != null && messageRoomId != roomId) {
+      print('⏭️ MESSAGE SKIPPED - Wrong Room');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
 
-          final uploadingIndex = state.messages.indexWhere(
-            (m) =>
-                m.isUploading &&
-                ((m.imageUrl == newMessage.imageUrl && m.imageUrl != null) ||
-                    (m.voiceUrl == newMessage.voiceUrl && m.voiceUrl != null)),
-          );
+    print('✅ Room Match - Parsing message...');
+    final newMessage = Message.fromJson(data);
+    
+    print('📝 Message Parsed:');
+    print('   ID: ${newMessage.id}');
+    print('   Text: "${newMessage.text}"');
+    print('   Sender: ${newMessage.sender.name}');
+    print('   Created: ${newMessage.createdAt}');
 
-          if (uploadingIndex != -1) {
-            print('✅ Replacing uploading message at index $uploadingIndex');
-            final updatedMessages = [...state.messages];
-            updatedMessages[uploadingIndex] = newMessage;
-            state = state.copyWith(messages: updatedMessages);
-            print('✅ Message replaced! Total: ${state.messages.length}');
-            return;
-          }
+    // Check for uploading message to replace
+    final uploadingIndex = state.messages.indexWhere(
+      (m) =>
+          m.isUploading &&
+          ((m.imageUrl == newMessage.imageUrl && m.imageUrl != null) ||
+              (m.voiceUrl == newMessage.voiceUrl && m.voiceUrl != null)),
+    );
 
-          final messageExists = state.messages.any(
-            (m) => m.id == newMessage.id,
-          );
+    if (uploadingIndex != -1) {
+      print('🔄 Replacing uploading message at index $uploadingIndex');
+      final updatedMessages = [...state.messages];
+      updatedMessages[uploadingIndex] = newMessage;
+      state = state.copyWith(messages: updatedMessages);
+      print('✅ Upload complete! Total: ${state.messages.length}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
 
-          if (messageExists) {
-            print('⏭️ Message already exists (id: ${newMessage.id}), skipping');
-            return;
-          }
+    // Check if message already exists
+    final messageExists = state.messages.any((m) => m.id == newMessage.id);
 
-          print(
-            '✅ Adding new message to UI (current: ${state.messages.length})',
-          );
+    if (messageExists) {
+      print('⏭️ MESSAGE DUPLICATE - Already Exists');
+      print('   Message ID: ${newMessage.id}');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
 
-          state = state.copyWith(messages: [...state.messages, newMessage]);
-
-          print('✅ Message added! New count: ${state.messages.length}');
-          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        } catch (e, stackTrace) {
-          print('❌ Error processing message: $e');
-          print('Stack trace: $stackTrace');
-        }
-      });
+    print('➕ Adding NEW message to state');
+    print('   Current count: ${state.messages.length}');
+    
+    state = state.copyWith(messages: [...state.messages, newMessage]);
+    
+    print('✅ MESSAGE ADDED SUCCESSFULLY!');
+    print('   New count: ${state.messages.length}');
+    print('   Instance: $_instanceNumber');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+  } catch (e, stackTrace) {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('❌ ERROR PROCESSING MESSAGE');
+    print('   Instance: $_instanceNumber');
+    print('   Error: $e');
+    print('   Stack: $stackTrace');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
+});
 
       print('✅ Listener registered');
 
@@ -213,6 +254,79 @@ class ChatController extends StateNotifier<ChatState> {
         }
       });
 
+       print('👂 Setting up message updated listener...');
+      socketController.onMessageUpdated((data) {
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        print('🔄 MESSAGE UPDATED EVENT RECEIVED');
+        print('   Instance Number: $_instanceNumber');
+        print('   Instance ID: $_instanceId');
+        print('   Controller Disposed: $_isDisposed');
+        print('   Data: $data');
+        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        if (_isDisposed) {
+          print('❌ UPDATE DROPPED - Controller Disposed!');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          return;
+        }
+
+        try {
+          final updatedMessage = Message.fromJson(data);
+          
+          print('📝 Message Updated Details:');
+          print('   Message ID: ${updatedMessage.id}');
+          print('   Message Type: ${updatedMessage.messageType}');
+          
+          if (updatedMessage.isCallMessage && updatedMessage.callData != null) {
+            print('   Call Status: ${updatedMessage.callData!.status}');
+            print('   Call Duration: ${updatedMessage.callData!.duration}');
+            print('   Participant Count: ${updatedMessage.callData!.participantCount}');
+            print('   Was Answered: ${updatedMessage.callData!.wasAnswered}');
+          }
+
+          // Find and update the message in the list
+          final messageIndex = state.messages.indexWhere(
+            (msg) => msg.id == updatedMessage.id,
+          );
+
+          if (messageIndex != -1) {
+            print('   ✅ Found message at index: $messageIndex');
+            print('   Updating message in state...');
+            
+            final updatedMessages = List<Message>.from(state.messages);
+            updatedMessages[messageIndex] = updatedMessage;
+
+            state = state.copyWith(messages: updatedMessages);
+            
+            print('   ✅ Message updated successfully!');
+            print('   Total messages: ${state.messages.length}');
+          } else {
+            print('   ⚠️ Message not found in list (ID: ${updatedMessage.id})');
+            print('   Current message IDs in state:');
+            for (var msg in state.messages) {
+              print('      - ${msg.id}');
+            }
+            print('   Adding message to state...');
+            
+            // If not found, add it (shouldn't happen for updates, but just in case)
+            final updatedMessages = [...state.messages, updatedMessage];
+            updatedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            
+            state = state.copyWith(messages: updatedMessages);
+            print('   ✅ Message added to state');
+          }
+          
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        } catch (e, stackTrace) {
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          print('❌ ERROR PROCESSING MESSAGE UPDATE');
+          print('   Instance: $_instanceNumber');
+          print('   Error: $e');
+          print('   Stack: $stackTrace');
+          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        }
+      });
+
       print('✅ Chat initialized successfully');
     } catch (e, stackTrace) {
       print('❌ Error initializing chat: $e');
@@ -225,19 +339,35 @@ class ChatController extends StateNotifier<ChatState> {
     }
   }
 
-  void sendMessage(
-    String text, {
-    String? imageUrl,
-    String? voiceUrl,
-    int? voiceDuration,
-  }) {
-    if (_isDisposed ||
-        (text.trim().isEmpty && imageUrl == null && voiceUrl == null))
-      return;
+void sendMessage(
+  String text, {
+  String? imageUrl,
+  String? voiceUrl,
+  int? voiceDuration,
+}) {
+  if (_isDisposed ||
+      (text.trim().isEmpty && imageUrl == null && voiceUrl == null))
+    return;
 
-    // ✅ Stop typing when sending message
-    _stopTyping();
+  final sendTime = DateTime.now();
+  
+  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  print('📤 SENDING MESSAGE from ChatController');
+  print('   Instance Number: $_instanceNumber');
+  print('   Instance ID: $_instanceId');
+  print('   Disposed: $_isDisposed');
+  print('   Room: $roomId');
+  print('   Send Time: ${sendTime.toIso8601String()}');
+  print('   Text: "$text"');
+  print('   Has Image: ${imageUrl != null}');
+  print('   Has Voice: ${voiceUrl != null}');
+  print('   Current Messages: ${state.messages.length}');
+  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
+  // ✅ Stop typing when sending message
+  _stopTyping();
+
+  try {
     final socketController = _ref.read(socketControllerProvider.notifier);
     socketController.sendMessage(
       roomId,
@@ -246,7 +376,19 @@ class ChatController extends StateNotifier<ChatState> {
       voiceUrl: voiceUrl,
       voiceDuration: voiceDuration,
     );
+    
+    print('✅ Message sent to socket');
+    print('   Instance: $_instanceNumber');
+    print('   Waiting for echo from backend...');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+  } catch (e) {
+    print('❌ ERROR SENDING MESSAGE');
+    print('   Instance: $_instanceNumber');
+    print('   Error: $e');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }
+}
 
   // ✅ NEW: Delete message
   Future<void> deleteMessage(String messageId) async {
@@ -498,6 +640,14 @@ class ChatController extends StateNotifier<ChatState> {
 
   @override
   void dispose() {
+       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('💀 ChatController DISPOSING');
+    print('   Room: $roomId');
+    print('   Instance ID: $_instanceId');
+    print('   Instance Number: $_instanceNumber');
+    print('   Time: ${DateTime.now().toIso8601String()}');
+    print('   Messages in state: ${state.messages.length}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     _isDisposed = true;
     _typingTimer?.cancel();
     super.dispose();

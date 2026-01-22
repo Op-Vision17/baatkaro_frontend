@@ -208,6 +208,16 @@ class SocketController extends StateNotifier<SocketState> {
     });
   }
 
+  void onMessageUpdated(Function(Map<String, dynamic>) callback) {
+    if (_isDisposed) return;
+    print('👂 Setting up message updated receiver');
+    _repository.onMessageUpdated((data) {
+      if (!_isDisposed) {
+        callback(data);
+      }
+    });
+  }
+
   void disconnect() {
     if (_isDisposed) return;
     print('🔌 Disconnecting socket');

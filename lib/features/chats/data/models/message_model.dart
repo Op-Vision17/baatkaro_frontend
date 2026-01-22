@@ -1,3 +1,5 @@
+// features/chats/data/models/message_model.dart
+
 class Message {
   final String id;
   final String text;
@@ -10,10 +12,14 @@ class Message {
   final double uploadProgress;
   final String? localFilePath;
 
-  // ✅ NEW: Delete functionality fields
+  // ✅ DELETE FUNCTIONALITY
   final bool isDeleted;
   final DateTime? deletedAt;
   final String? deletedBy;
+
+  // ✅ NEW: Message type and call data
+  final MessageType messageType;
+  final CallData? callData;
 
   Message({
     required this.id,
@@ -29,11 +35,14 @@ class Message {
     this.isDeleted = false,
     this.deletedAt,
     this.deletedBy,
+    this.messageType = MessageType.text,
+    this.callData,
   });
 
   bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
   bool get hasVoice => voiceUrl != null && voiceUrl!.isNotEmpty;
   bool get canBeDeleted => !isDeleted && !isUploading;
+  bool get isCallMessage => messageType == MessageType.call;
 
   Message copyWith({
     String? id,
@@ -49,6 +58,8 @@ class Message {
     bool? isDeleted,
     DateTime? deletedAt,
     String? deletedBy,
+    MessageType? messageType,
+    CallData? callData,
   }) {
     return Message(
       id: id ?? this.id,
@@ -64,10 +75,27 @@ class Message {
       isDeleted: isDeleted ?? this.isDeleted,
       deletedAt: deletedAt ?? this.deletedAt,
       deletedBy: deletedBy ?? this.deletedBy,
+      messageType: messageType ?? this.messageType,
+      callData: callData ?? this.callData,
     );
   }
 
   factory Message.fromJson(Map<String, dynamic> json) {
+    // Determine message type
+    final typeStr = json['messageType']?.toString() ?? 'text';
+    MessageType messageType;
+
+    // Handle message type conversion
+    if (typeStr == 'call') {
+      messageType = MessageType.call;
+    } else if (typeStr == 'image') {
+      messageType = MessageType.image;
+    } else if (typeStr == 'voice') {
+      messageType = MessageType.voice;
+    } else {
+      messageType = MessageType.text;
+    }
+
     return Message(
       id: json['_id']?.toString() ?? json['id']?.toString() ?? '',
       text: json['text']?.toString() ?? '',
@@ -83,6 +111,10 @@ class Message {
           ? DateTime.parse(json['deletedAt'].toString())
           : null,
       deletedBy: json['deletedBy']?.toString(),
+      messageType: messageType,
+      callData: json['callData'] != null
+          ? CallData.fromJson(json['callData'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -98,6 +130,89 @@ class Message {
       'isDeleted': isDeleted,
       'deletedAt': deletedAt?.toIso8601String(),
       'deletedBy': deletedBy,
+      'messageType': messageType.name,
+      'callData': callData?.toJson(),
+    };
+  }
+}
+
+// ✅ NEW: Message Type Enum
+enum MessageType { text, image, voice, call }
+
+// ✅ NEW: Call Data Model
+class CallData {
+  final String callId;
+  final String callType; // 'audio' or 'video'
+  final String status; // 'started', 'ongoing', 'ended', 'missed'
+  final String initiatorId;
+  final String initiatorName;
+  final DateTime startTime;
+  final DateTime? endTime;
+  final int? duration; // in seconds
+  final int participantCount;
+  final bool wasAnswered;
+
+  CallData({
+    required this.callId,
+    required this.callType,
+    required this.status,
+    required this.initiatorId,
+    required this.initiatorName,
+    required this.startTime,
+    this.endTime,
+    this.duration,
+    required this.participantCount,
+    required this.wasAnswered,
+  });
+
+  bool get isOngoing => status == 'ongoing';
+  bool get isEnded => status == 'ended';
+  bool get isMissed => status == 'missed';
+
+  String get durationText {
+    if (duration == null) return '';
+
+    final minutes = duration! ~/ 60;
+    final seconds = duration! % 60;
+
+    if (minutes > 0) {
+      return '${minutes}m ${seconds}s';
+    } else {
+      return '${seconds}s';
+    }
+  }
+
+  factory CallData.fromJson(Map<String, dynamic> json) {
+    return CallData(
+      callId: json['callId']?.toString() ?? '',
+      callType: json['callType']?.toString() ?? 'audio',
+      status: json['status']?.toString() ?? 'started',
+      initiatorId: json['initiatorId']?.toString() ?? '',
+      initiatorName: json['initiatorName']?.toString() ?? '',
+      startTime: json['startTime'] != null
+          ? DateTime.parse(json['startTime'].toString())
+          : DateTime.now(),
+      endTime: json['endTime'] != null
+          ? DateTime.parse(json['endTime'].toString())
+          : null,
+      duration: json['duration'] as int?,
+      participantCount: json['participantCount'] as int? ?? 0,
+      wasAnswered: json['wasAnswered'] ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'callId': callId,
+      'callType': callType,
+      'status': status,
+      'initiatorId': initiatorId,
+      'initiatorName': initiatorName,
+      'startTime': startTime.toIso8601String(),
+      'endTime': endTime?.toIso8601String(),
+      'duration': duration,
+      'participantCount': participantCount,
+      'wasAnswered': wasAnswered,
     };
   }
 }
@@ -134,7 +249,7 @@ class MessageSender {
   }
 }
 
-// ✅ NEW: Typing User Model
+// ✅ Typing User Model (unchanged)
 class TypingUser {
   final String userId;
   final String name;
