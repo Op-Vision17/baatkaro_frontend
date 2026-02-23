@@ -187,7 +187,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 SizedBox(height: 32),
 
                 Text(
-                  'Welcome to Baatkro!',
+                  'Welcome to Baatkaro!',
                   style: theme.textTheme.displayMedium,
                   textAlign: TextAlign.center,
                 ),

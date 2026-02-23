@@ -107,7 +107,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final authState = ref.watch(authControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: Text('Baatkro Login')),
+      appBar: AppBar(title: Text('Baatkaro Login')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: EdgeInsets.all(24),
@@ -123,7 +123,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 SizedBox(height: 16),
 
                 Text(
-                  'Welcome to Baatkro',
+                  'Welcome to Baatkaro',
                   style: Theme.of(context).textTheme.displayMedium,
                 ),
                 SizedBox(height: 8),

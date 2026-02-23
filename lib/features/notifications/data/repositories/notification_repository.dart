@@ -2,6 +2,7 @@
 
 import 'dart:developer';
 
+import 'package:baatkaro/core/utils/dio_error_helper.dart';
 import 'package:dio/dio.dart';
 
 class NotificationRepository {
@@ -16,7 +17,7 @@ class NotificationRepository {
       log('Notification Settings Response: ${response.data}');
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -38,21 +39,8 @@ class NotificationRepository {
       );
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
-  String _handleError(DioException e) {
-    if (e.response?.data != null && e.response?.data['message'] != null) {
-      return e.response!.data['message'];
-    }
-    if (e.response?.statusCode == 404) {
-      return 'Not found';
-    } else if (e.response?.statusCode == 401) {
-      return 'Unauthorized';
-    } else if (e.type == DioExceptionType.connectionTimeout) {
-      return 'Connection timeout';
-    }
-    return e.message ?? 'Unknown error occurred';
-  }
 }

@@ -36,7 +36,8 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        
+        // For smaller APKs use: flutter build apk --release --split-per-abi
+        // (Do not set ndk.abiFilters here — it conflicts with --split-per-abi.)
     }
 
  buildTypes {
@@ -54,6 +55,19 @@ android {
         )
     }
 }
+    packagingOptions {
+        resources {
+            // Agora: exclude optional extensions to reduce size (~2–3 MB+)
+            excludes += "lib/arm64-v8a/libagora_ai_denoise_extension.so"
+            excludes += "lib/arm64-v8a/libagora_spatial_audio_extension.so"
+            excludes += "lib/arm64-v8a/libagora_segmentation_extension.so"
+            excludes += "lib/arm64-v8a/libagora_video_process_extension.so"
+            excludes += "lib/armeabi-v7a/libagora_ai_denoise_extension.so"
+            excludes += "lib/armeabi-v7a/libagora_spatial_audio_extension.so"
+            excludes += "lib/armeabi-v7a/libagora_segmentation_extension.so"
+            excludes += "lib/armeabi-v7a/libagora_video_process_extension.so"
+        }
+    }
 }
 
 flutter {

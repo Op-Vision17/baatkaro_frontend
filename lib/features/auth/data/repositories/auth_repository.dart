@@ -2,6 +2,7 @@
 
 import 'dart:io';
 
+import 'package:baatkaro/core/utils/dio_error_helper.dart';
 import 'package:baatkaro/features/auth/data/models/user_model.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,7 +23,7 @@ class AuthRepository {
       );
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -42,7 +43,7 @@ class AuthRepository {
 
       return user;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -83,7 +84,7 @@ class AuthRepository {
         needsOnboarding: false,
       );
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -93,7 +94,7 @@ class AuthRepository {
       final response = await _dio.get(AppConstants.profileEndpoint);
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -122,7 +123,7 @@ class AuthRepository {
       }
     } on DioException catch (e) {
       print('❌ Upload error: $e');
-      throw Exception('Failed to upload profile photo: ${_handleError(e)}');
+      throw Exception('Failed to upload profile photo: ${dioErrorMessage(e)}');
     }
   }
 
@@ -148,7 +149,7 @@ class AuthRepository {
 
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -188,7 +189,7 @@ class AuthRepository {
       );
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -201,7 +202,7 @@ class AuthRepository {
       );
       return response.data;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -288,25 +289,4 @@ class AuthRepository {
     }
   }
 
-  // Error handler
-  String _handleError(DioException e) {
-    if (e.response?.data != null && e.response?.data['message'] != null) {
-      return e.response!.data['message'];
-    }
-
-    if (e.response?.statusCode == 404) {
-      return 'Not found';
-    } else if (e.response?.statusCode == 401) {
-      return 'Unauthorized';
-    } else if (e.response?.statusCode == 400) {
-      return 'Invalid request';
-    } else if (e.type == DioExceptionType.connectionTimeout) {
-      return 'Connection timeout';
-    } else if (e.type == DioExceptionType.receiveTimeout) {
-      return 'Receive timeout';
-    } else if (e.type == DioExceptionType.connectionError) {
-      return 'No internet connection';
-    }
-    return e.message ?? 'Unknown error occurred';
-  }
 }

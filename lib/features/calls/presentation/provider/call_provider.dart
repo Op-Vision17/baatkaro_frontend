@@ -1,5 +1,6 @@
-// call_provider.dart - FIXED: Single source of truth, no duplicate listeners
+// call_provider.dart - FIXED: Stream subscriptions instead of callbacks
 
+import 'dart:async';
 import 'package:baatkaro/features/calls/data/model/call_model.dart';
 import 'package:baatkaro/features/calls/data/repository/call_repository.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,11 +17,7 @@ final callRepositoryProvider = Provider<CallRepository>((ref) {
   return CallRepository(dio);
 });
 
-// ✅ SINGLE SOURCE OF TRUTH: Active calls from socket ONLY
-// This is populated by socket events (incoming_call) from backend
 final activeCallsProvider = StateProvider<Map<String, CallModel>>((ref) => {});
-
-// Current user's active call (the one they're in)
 final myActiveCallProvider = StateProvider<CallModel?>((ref) => null);
 
 // Call State for UI
@@ -84,7 +81,14 @@ class CallController extends StateNotifier<CallState> {
   final CallRepository _callRepository;
   final SocketRepository _socketRepository;
   final Ref _ref;
-  bool _listenersSetup = false;
+  
+  // ✅ Stream subscriptions
+  StreamSubscription<Map<String, dynamic>>? _incomingCallSubscription;
+  StreamSubscription<Map<String, dynamic>>? _callStartedSubscription;
+  StreamSubscription<Map<String, dynamic>>? _userJoinedSubscription;
+  StreamSubscription<Map<String, dynamic>>? _userLeftSubscription;
+  StreamSubscription<Map<String, dynamic>>? _callEndedSubscription;
+  StreamSubscription<Map<String, dynamic>>? _callErrorSubscription;
 
   CallController(this._callRepository, this._socketRepository, this._ref)
     : super(CallState()) {
@@ -92,248 +96,210 @@ class CallController extends StateNotifier<CallState> {
   }
 
   void _setupCallListeners() {
-    if (_listenersSetup) {
-      print('⚠️ Call listeners already setup, skipping');
-      return;
-    }
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🎧 Setting up call stream subscriptions');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    print('🎧 Setting up call event listeners...');
+    // ✅ Subscribe to call streams
+    _incomingCallSubscription = _socketRepository.incomingCallStream.listen(
+      _handleIncomingCall,
+      onError: (error) => print('❌ Incoming call stream error: $error'),
+    );
 
-    // ✅ Re-register listeners on socket reconnect
-    _socketRepository.onConnected = () {
-      print('✅ Socket reconnected - re-registering call listeners');
-      _registerCallListeners();
-    };
+    _callStartedSubscription = _socketRepository.callStartedStream.listen(
+      _handleCallStarted,
+      onError: (error) => print('❌ Call started stream error: $error'),
+    );
 
-    _registerCallListeners();
-    _listenersSetup = true;
-    print('✅ Call listeners setup complete');
+    _userJoinedSubscription = _socketRepository.userJoinedCallStream.listen(
+      _handleUserJoined,
+      onError: (error) => print('❌ User joined stream error: $error'),
+    );
+
+    _userLeftSubscription = _socketRepository.userLeftCallStream.listen(
+      _handleUserLeft,
+      onError: (error) => print('❌ User left stream error: $error'),
+    );
+
+    _callEndedSubscription = _socketRepository.callEndedStream.listen(
+      _handleCallEnded,
+      onError: (error) => print('❌ Call ended stream error: $error'),
+    );
+
+    _callErrorSubscription = _socketRepository.callErrorStream.listen(
+      _handleCallError,
+      onError: (error) => print('❌ Call error stream error: $error'),
+    );
+
+    print('✅ Call stream subscriptions setup complete');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }
 
-  void _registerCallListeners() {
-    print('📞 Registering call event listeners...');
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STREAM HANDLERS
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 📞 INCOMING CALL
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onIncomingCall((data) async {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('📞 INCOMING CALL EVENT');
-      print('   Call ID: ${data['callId']}');
-      print('   Room ID: ${data['roomId']}');
-      print('   Caller: ${data['caller']?['name']}');
-      print('   Status: ${data['status']}');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  Future<void> _handleIncomingCall(Map<String, dynamic> data) async {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('📞 INCOMING CALL (Stream)');
+    print('   Call ID: ${data['callId']}');
+    print('   Room ID: ${data['roomId']}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      try {
-        final call = CallModel.fromJson(data);
+    try {
+      final call = CallModel.fromJson(data);
 
-        // Get current user ID
-        final prefs = await _ref.read(sharedPreferencesProvider.future);
-        final currentUserId = prefs.getString('userId');
+      final prefs = await _ref.read(sharedPreferencesProvider.future);
+      final currentUserId = prefs.getString('userId');
 
-        print('   Current User: $currentUserId');
-        print('   Caller ID: ${call.caller.id}');
+      final isMyOutgoingCall = call.caller.id == currentUserId;
+      final myCall = _ref.read(myActiveCallProvider);
+      final isMyActiveCall = myCall != null && myCall.roomId == call.roomId;
 
-        // ✅ Check if I'm the one who initiated this call
-        final isMyOutgoingCall = call.caller.id == currentUserId;
-
-        // ✅ Check if I'm already in this call
-        final myCall = _ref.read(myActiveCallProvider);
-        final isMyActiveCall = myCall != null && myCall.roomId == call.roomId;
-
-        print('   Is my outgoing call: $isMyOutgoingCall');
-        print('   Is my active call: $isMyActiveCall');
-
-        // ✅ CRITICAL LOGIC: Only add to activeCallsProvider if:
-        // 1. NOT my outgoing call (I didn't initiate it)
-        // 2. NOT already my active call (I'm not already in it)
-        if (!isMyOutgoingCall && !isMyActiveCall) {
-          print('   ✅ Adding to activeCallsProvider (incoming from others)');
-
-          final activeCalls = _ref.read(activeCallsProvider.notifier);
-          activeCalls.update((state) => {...state, call.roomId: call});
-
-          print('   ✅ Active calls updated');
-          print(
-            '   Total active calls: ${_ref.read(activeCallsProvider).length}',
-          );
-        } else {
-          if (isMyOutgoingCall) {
-            print('   ⏭️ Skipping: This is MY outgoing call');
-          }
-          if (isMyActiveCall) {
-            print('   ⏭️ Skipping: I\'m already in this call');
-          }
-        }
-      } catch (e, stackTrace) {
-        print('❌ Error processing incoming call: $e');
-        print('Stack trace: $stackTrace');
+      if (!isMyOutgoingCall && !isMyActiveCall) {
+        print('   ✅ Adding to activeCallsProvider');
+        final activeCalls = _ref.read(activeCallsProvider.notifier);
+        activeCalls.update((state) => {...state, call.roomId: call});
+      } else {
+        print('   ⏭️ Skipping (my call)');
       }
-    });
+    } catch (e) {
+      print('❌ Error handling incoming call: $e');
+    }
+  }
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // ✅ CALL STARTED (backend confirmed)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onCallStarted((data) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('📞 CALL STARTED EVENT');
-      print('   Call ID: ${data['callId']}');
-      print('   Room ID: ${data['roomId']}');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  void _handleCallStarted(Map<String, dynamic> data) {
+    print('📞 CALL STARTED (Stream): ${data['callId']}');
 
-      try {
-        final callId = data['callId']?.toString();
-        final roomId = data['roomId']?.toString();
-
-        if (callId != null && roomId != null) {
-          // Update MY call with real ID if this is my outgoing call
-          if (state.currentCall != null &&
-              state.currentCall!.roomId == roomId) {
-            final updatedCall = CallModel(
-              id: callId,
-              roomId: state.currentCall!.roomId,
-              roomName: state.currentCall!.roomName,
-              callType: state.currentCall!.callType,
-              caller: state.currentCall!.caller,
-              participants: state.currentCall!.participants,
-              status: 'ongoing',
-              startTime: DateTime.now(),
-            );
-
-            state = state.copyWith(
-              currentCall: updatedCall,
-              isInCall: true,
-              isRinging: false,
-            );
-
-            _ref.read(myActiveCallProvider.notifier).state = updatedCall;
-
-            print('✅ My call updated with real ID: $callId');
-          }
-        }
-      } catch (e) {
-        print('❌ Error processing call started: $e');
-      }
-    });
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 👥 USER JOINED CALL
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onUserJoinedCall((data) {
-      print('✅ USER JOINED CALL: ${data['user']?['name']}');
-
-      try {
-        final userData = data['user'] as Map<String, dynamic>?;
-        if (userData != null) {
-          final user = CallUser.fromJson(userData);
-
-          if (!state.participants.any((p) => p.id == user.id)) {
-            state = state.copyWith(participants: [...state.participants, user]);
-            print('✅ Added participant: ${user.name}');
-          }
-        }
-      } catch (e) {
-        print('❌ Error processing user joined: $e');
-      }
-    });
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🚪 USER LEFT CALL
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onUserLeftCall((data) {
-      print('🚪 USER LEFT CALL: ${data['user']?['id']}');
-
-      try {
-        final userData = data['user'] as Map<String, dynamic>?;
-        if (userData != null) {
-          final userId = userData['id']?.toString();
-
-          if (userId != null) {
-            state = state.copyWith(
-              participants: state.participants
-                  .where((p) => p.id != userId)
-                  .toList(),
-            );
-            print('✅ Removed participant: $userId');
-          }
-        }
-      } catch (e) {
-        print('❌ Error processing user left: $e');
-      }
-    });
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 🏁 CALL ENDED
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onCallEnded((data) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🏁 CALL ENDED EVENT');
-      print('   Call ID: ${data['callId']}');
-      print('   Room ID: ${data['roomId']}');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
+    try {
+      final callId = data['callId']?.toString();
       final roomId = data['roomId']?.toString();
 
-      if (roomId != null) {
-        print('   Cleaning up call for room: $roomId');
+      if (callId != null && 
+          roomId != null && 
+          state.currentCall != null &&
+          state.currentCall!.roomId == roomId) {
+        
+        final updatedCall = CallModel(
+          id: callId,
+          roomId: state.currentCall!.roomId,
+          roomName: state.currentCall!.roomName,
+          callType: state.currentCall!.callType,
+          caller: state.currentCall!.caller,
+          participants: state.currentCall!.participants,
+          status: 'ongoing',
+          startTime: DateTime.now(),
+        );
 
-        // ✅ Remove from activeCallsProvider
-        final activeCalls = _ref.read(activeCallsProvider.notifier);
-        activeCalls.update((state) {
-          final newState = Map<String, CallModel>.from(state);
-          newState.remove(roomId);
-          print(
-            '   ✅ Removed from active calls. Remaining: ${newState.keys.toList()}',
-          );
-          return newState;
-        });
+        state = state.copyWith(
+          currentCall: updatedCall,
+          isInCall: true,
+          isRinging: false,
+        );
 
-        // ✅ Clear myActiveCallProvider if this was my call
-        final myCall = _ref.read(myActiveCallProvider);
-        if (myCall != null && myCall.roomId == roomId) {
-          print('   ✅ Clearing myActiveCallProvider');
-          _ref.read(myActiveCallProvider.notifier).state = null;
+        _ref.read(myActiveCallProvider.notifier).state = updatedCall;
+        print('✅ My call updated with real ID');
+      }
+    } catch (e) {
+      print('❌ Error handling call started: $e');
+    }
+  }
+
+  void _handleUserJoined(Map<String, dynamic> data) {
+    print('✅ USER JOINED (Stream): ${data['user']?['name']}');
+
+    try {
+      final userData = data['user'] as Map<String, dynamic>?;
+      if (userData != null) {
+        final user = CallUser.fromJson(userData);
+
+        if (!state.participants.any((p) => p.id == user.id)) {
+          state = state.copyWith(participants: [...state.participants, user]);
+          print('✅ Added participant: ${user.name}');
         }
       }
+    } catch (e) {
+      print('❌ Error handling user joined: $e');
+    }
+  }
 
-      // ✅ End MY call state if I'm in this room
-      if (state.currentCall != null && state.currentCall!.roomId == roomId) {
-        print('   This was my active call, ending it');
-        _endCall();
+  void _handleUserLeft(Map<String, dynamic> data) {
+    print('🚪 USER LEFT (Stream): ${data['user']?['id']}');
+
+    try {
+      final userData = data['user'] as Map<String, dynamic>?;
+      if (userData != null) {
+        final userId = userData['id']?.toString();
+
+        if (userId != null) {
+          state = state.copyWith(
+            participants: state.participants
+                .where((p) => p.id != userId)
+                .toList(),
+          );
+          print('✅ Removed participant: $userId');
+        }
       }
-    });
+    } catch (e) {
+      print('❌ Error handling user left: $e');
+    }
+  }
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // ❌ CALL ERROR
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    _socketRepository.onCallError((data) {
-      print('❌ CALL ERROR: ${data['message']}');
+  void _handleCallEnded(Map<String, dynamic> data) {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🏁 CALL ENDED (Stream)');
+    print('   Call ID: ${data['callId']}');
+    print('   Room ID: ${data['roomId']}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      state = state.copyWith(
-        error: data['message']?.toString() ?? 'Call error occurred',
-      );
-    });
+    final roomId = data['roomId']?.toString();
+
+    if (roomId != null) {
+      // Remove from active calls
+      final activeCalls = _ref.read(activeCallsProvider.notifier);
+      activeCalls.update((state) {
+        final newState = Map<String, CallModel>.from(state);
+        newState.remove(roomId);
+        return newState;
+      });
+
+      // Clear my active call
+      final myCall = _ref.read(myActiveCallProvider);
+      if (myCall != null && myCall.roomId == roomId) {
+        _ref.read(myActiveCallProvider.notifier).state = null;
+      }
+    }
+
+    // End my call state
+    if (state.currentCall != null && state.currentCall!.roomId == roomId) {
+      _endCall();
+    }
+  }
+
+  void _handleCallError(Map<String, dynamic> data) {
+    print('❌ CALL ERROR (Stream): ${data['message']}');
+
+    state = state.copyWith(
+      error: data['message']?.toString() ?? 'Call error occurred',
+    );
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 📞 START CALL
+  // CALL ACTIONS
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   Future<void> startCall({
     required String roomId,
     required String roomName,
     required String callType,
   }) async {
     try {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       print('📞 Starting $callType call in room: $roomId');
 
-      // Get current user info
       final prefs = await _ref.read(sharedPreferencesProvider.future);
       final userId = prefs.getString('userId') ?? '';
       final userName = prefs.getString('userName') ?? 'You';
 
-      // Create temporary call model
       final tempCall = CallModel(
         id: 'temp_${DateTime.now().millisecondsSinceEpoch}',
         roomId: roomId,
@@ -348,41 +314,27 @@ class CallController extends StateNotifier<CallState> {
       state = state.copyWith(isRinging: true, currentCall: tempCall);
       _ref.read(myActiveCallProvider.notifier).state = tempCall;
 
-      print('   ✅ Set myActiveCallProvider (outgoing call)');
-
-      // Emit socket event
       _socketRepository.startCall(roomId, callType);
 
-      // Generate Agora token immediately
-      try {
-        final tokenData = await _callRepository.generateAgoraToken(
-          channelName: roomId,
-          uid: userId.hashCode,
-        );
+      // Generate Agora token
+      final tokenData = await _callRepository.generateAgoraToken(
+        channelName: roomId,
+        uid: userId.hashCode,
+      );
 
-        state = state.copyWith(
-          agoraToken: tokenData['token'],
-          agoraChannel: roomId,
-          agoraUid: userId.hashCode,
-          isInCall: true,
-          isRinging: false,
-        );
+      state = state.copyWith(
+        agoraToken: tokenData['token'],
+        agoraChannel: roomId,
+        agoraUid: userId.hashCode,
+        isInCall: true,
+        isRinging: false,
+      );
 
-        print('✅ Call started, Agora token generated');
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      } catch (tokenError) {
-        print('❌ Failed to generate Agora token: $tokenError');
-        state = state.copyWith(
-          error: 'Failed to generate call token',
-          isRinging: false,
-          currentCall: null,
-        );
-        _ref.read(myActiveCallProvider.notifier).state = null;
-      }
+      print('✅ Call started');
     } catch (e) {
       print('❌ Error starting call: $e');
       state = state.copyWith(
-        error: e.toString().replaceFirst('Exception: ', ''),
+        error: e.toString(),
         isRinging: false,
         currentCall: null,
       );
@@ -390,45 +342,31 @@ class CallController extends StateNotifier<CallState> {
     }
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // ✅ JOIN CALL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Future<void> joinCall(String roomId, String callId) async {
     try {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('✅ Joining call: $callId in room: $roomId');
+      print('✅ Joining call: $callId');
 
-      // Get current user info
       final prefs = await _ref.read(sharedPreferencesProvider.future);
       final userId = prefs.getString('userId') ?? '';
 
-      // Get call from active calls
       final activeCalls = _ref.read(activeCallsProvider);
       final call = activeCalls[roomId];
 
       if (call == null) {
-        print('❌ No active call found for room: $roomId');
         state = state.copyWith(error: 'Call not found');
         return;
       }
 
-      print('   ✅ Found call in activeCallsProvider');
-
-      // ✅ Remove from activeCallsProvider when joining (it's now MY call)
+      // Remove from active calls (now it's my call)
       _ref.read(activeCallsProvider.notifier).update((state) {
         final newState = Map<String, CallModel>.from(state);
         newState.remove(roomId);
-        print('   ✅ Removed from activeCallsProvider (now my call)');
         return newState;
       });
 
-      // Update state
       state = state.copyWith(currentCall: call, isRinging: false);
       _ref.read(myActiveCallProvider.notifier).state = call;
 
-      print('   ✅ Set myActiveCallProvider (joined call)');
-
-      // Emit socket event
       _socketRepository.joinCall(roomId, callId);
 
       // Generate Agora token
@@ -445,37 +383,25 @@ class CallController extends StateNotifier<CallState> {
       );
 
       print('✅ Joined call successfully');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     } catch (e) {
       print('❌ Error joining call: $e');
-      state = state.copyWith(
-        error: e.toString().replaceFirst('Exception: ', ''),
-      );
+      state = state.copyWith(error: e.toString());
     }
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // ❌ REJECT CALL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void rejectCall(String roomId, String callId) {
     print('❌ Rejecting call: $callId');
 
     _socketRepository.rejectCall(roomId, callId);
 
-    // Remove from active calls
     final activeCalls = _ref.read(activeCallsProvider.notifier);
     activeCalls.update((state) {
       final newState = Map<String, CallModel>.from(state);
       newState.remove(roomId);
       return newState;
     });
-
-    print('✅ Call rejected and removed from activeCallsProvider');
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🚪 LEAVE CALL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void leaveCall() {
     if (state.currentCall == null) return;
 
@@ -489,58 +415,53 @@ class CallController extends StateNotifier<CallState> {
     _endCall();
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🔇 TOGGLE AUDIO
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void toggleAudio() {
     if (state.currentCall == null) return;
 
     final newMutedState = !state.isMuted;
-
-    print('🔇 Toggle audio: ${newMutedState ? "MUTED" : "UNMUTED"}');
-
     _socketRepository.toggleAudio(state.currentCall!.roomId, newMutedState);
-
     state = state.copyWith(isMuted: newMutedState);
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 📹 TOGGLE VIDEO
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void toggleVideo() {
     if (state.currentCall == null) return;
 
     final newVideoState = !state.isVideoOff;
-
-    print('📹 Toggle video: ${newVideoState ? "OFF" : "ON"}');
-
     _socketRepository.toggleVideo(state.currentCall!.roomId, newVideoState);
-
     state = state.copyWith(isVideoOff: newVideoState);
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🏁 END CALL (Cleanup)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void _endCall() {
-    print('🏁 Ending call...');
-
+    print('🏁 Ending call');
     state = CallState();
     _ref.read(myActiveCallProvider.notifier).state = null;
-
-    print('✅ Call ended, state cleared');
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🔍 CHECK ACTIVE CALL IN ROOM
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   CallModel? getActiveCallForRoom(String roomId) {
     final activeCalls = _ref.read(activeCallsProvider);
     return activeCalls[roomId];
   }
+
+  @override
+  void dispose() {
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🗑️ Disposing CallController');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // ✅ Cancel all stream subscriptions
+    _incomingCallSubscription?.cancel();
+    _callStartedSubscription?.cancel();
+    _userJoinedSubscription?.cancel();
+    _userLeftSubscription?.cancel();
+    _callEndedSubscription?.cancel();
+    _callErrorSubscription?.cancel();
+    
+    print('✅ Stream subscriptions cancelled');
+    
+    super.dispose();
+  }
 }
 
-// Call Controller Provider
 final callControllerProvider = StateNotifierProvider<CallController, CallState>(
   (ref) {
     final callRepository = ref.watch(callRepositoryProvider);

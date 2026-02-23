@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:baatkaro/core/constants/app_constants.dart';
+import 'package:baatkaro/core/utils/dio_error_helper.dart';
 import 'package:dio/dio.dart';
 
 class ChatRepository {
@@ -13,7 +14,7 @@ class ChatRepository {
       final response = await _dio.get(AppConstants.myRoomsEndpoint);
       return response.data as List<dynamic>;
     } on DioException catch (e) {
-      throw Exception('Failed to get rooms: ${_handleError(e)}');
+      throw Exception('Failed to get rooms: ${dioErrorMessage(e)}');
     }
   }
 
@@ -27,9 +28,9 @@ class ChatRepository {
         AppConstants.createRoomEndpoint,
         data: {'name': name, if (roomPhoto != null) 'roomPhoto': roomPhoto},
       );
-      return response.data as Map<String, dynamic>;
+      return response.data['room'] as Map<String, dynamic>;
     } on DioException catch (e) {
-      throw Exception('Failed to create room: ${_handleError(e)}');
+      throw Exception('Failed to create room: ${dioErrorMessage(e)}');
     }
   }
 
@@ -41,7 +42,7 @@ class ChatRepository {
   }) async {
     try {
       final response = await _dio.put(
-        '/api/room/$roomId',
+        AppConstants.roomDetailEndpoint(roomId),
         data: {
           if (name != null) 'name': name,
           if (roomPhoto != null) 'roomPhoto': roomPhoto,
@@ -49,7 +50,7 @@ class ChatRepository {
       );
       return response.data['room'] as Map<String, dynamic>;
     } on DioException catch (e) {
-      throw Exception('Failed to update room: ${_handleError(e)}');
+      throw Exception('Failed to update room: ${dioErrorMessage(e)}');
     }
   }
 
@@ -60,50 +61,51 @@ class ChatRepository {
         AppConstants.joinRoomEndpoint,
         data: {'roomCode': roomCode},
       );
-      return response.data as Map<String, dynamic>;
+      return response.data['room'] as Map<String, dynamic>;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
         throw Exception('Room not found');
       }
-      throw Exception('Failed to join room: ${_handleError(e)}');
+      throw Exception('Failed to join room: ${dioErrorMessage(e)}');
     }
   }
 
   // Get room details
   Future<Map<String, dynamic>> getRoomDetails(String roomId) async {
     try {
-      final response = await _dio.get('/api/room/$roomId');
+      final response = await _dio.get(AppConstants.roomDetailEndpoint(roomId));
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      throw Exception('Failed to get room details: ${_handleError(e)}');
+      throw Exception('Failed to get room details: ${dioErrorMessage(e)}');
     }
   }
 
   // Delete room
   Future<void> deleteRoom(String roomId) async {
     try {
-      await _dio.delete('/api/room/$roomId');
+      await _dio.delete(AppConstants.roomDetailEndpoint(roomId));
     } on DioException catch (e) {
-      throw Exception('Failed to delete room: ${_handleError(e)}');
+      throw Exception('Failed to delete room: ${dioErrorMessage(e)}');
     }
   }
 
   // Leave room
   Future<void> leaveRoom(String roomId) async {
     try {
-      await _dio.post('/api/room/$roomId/leave');
+      await _dio.post(AppConstants.roomLeaveEndpoint(roomId));
     } on DioException catch (e) {
-      throw Exception('Failed to leave room: ${_handleError(e)}');
+      throw Exception('Failed to leave room: ${dioErrorMessage(e)}');
     }
   }
 
   // Get room messages
   Future<List<dynamic>> getRoomMessages(String roomId) async {
     try {
-      final response = await _dio.get('/api/room/$roomId/messages');
+      final response =
+          await _dio.get(AppConstants.roomMessagesEndpoint(roomId));
       return response.data as List<dynamic>;
     } on DioException catch (e) {
-      throw Exception('Failed to get messages: ${_handleError(e)}');
+      throw Exception('Failed to get messages: ${dioErrorMessage(e)}');
     }
   }
 
@@ -132,7 +134,7 @@ class ChatRepository {
       }
     } on DioException catch (e) {
       print('❌ Upload error: $e');
-      throw Exception('Failed to upload room photo: ${_handleError(e)}');
+      throw Exception('Failed to upload room photo: ${dioErrorMessage(e)}');
     }
   }
 
@@ -164,7 +166,7 @@ class ChatRepository {
       }
     } on DioException catch (e) {
       print('❌ Upload error: $e');
-      throw Exception('Failed to upload image: ${_handleError(e)}');
+      throw Exception('Failed to upload image: ${dioErrorMessage(e)}');
     }
   }
 
@@ -195,20 +197,8 @@ class ChatRepository {
       }
     } on DioException catch (e) {
       print('❌ Upload error: $e');
-      throw Exception('Failed to upload voice: ${_handleError(e)}');
+      throw Exception('Failed to upload voice: ${dioErrorMessage(e)}');
     }
   }
 
-  String _handleError(DioException e) {
-    if (e.response?.statusCode == 404) {
-      return 'Not found';
-    } else if (e.response?.statusCode == 401) {
-      return 'Unauthorized';
-    } else if (e.type == DioExceptionType.connectionTimeout) {
-      return 'Connection timeout';
-    } else if (e.type == DioExceptionType.receiveTimeout) {
-      return 'Receive timeout';
-    }
-    return e.message ?? 'Unknown error occurred';
-  }
 }

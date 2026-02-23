@@ -1,5 +1,5 @@
 // features/chats/data/repositories/socket_repository.dart
-// ✅ ENHANCED: Better connection management, automatic reconnection, message queue
+// ✅ FIXED: Stream-based architecture - Single listener, multiple subscribers
 
 import 'dart:async';
 import 'package:baatkaro/core/constants/app_constants.dart';
@@ -15,14 +15,45 @@ class SocketRepository {
   final List<Map<String, dynamic>> _pendingMessages = [];
   bool _isSendingPending = false;
 
-  // ✅ ADD THESE THREE LINES:
-  Function(Map<String, dynamic>)? _messageCallback;
-  bool _messageListenerRegistered = false;
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ✅ STREAMS: Single source of truth for all events
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  final _messageStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _messageDeletedStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _messageUpdatedStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _typingStreamController = StreamController<List<Map<String, dynamic>>>.broadcast();
+  final _onlineUsersStreamController = StreamController<List<String>>.broadcast();
+  
+  // Call event streams
+  final _incomingCallStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _callStartedStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _userJoinedCallStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _userLeftCallStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _callEndedStreamController = StreamController<Map<String, dynamic>>.broadcast();
+  final _callErrorStreamController = StreamController<Map<String, dynamic>>.broadcast();
 
-  // Connection state callbacks
+  // ✅ EXPOSE STREAMS (not callbacks)
+  Stream<Map<String, dynamic>> get messageStream => _messageStreamController.stream;
+  Stream<Map<String, dynamic>> get messageDeletedStream => _messageDeletedStreamController.stream;
+  Stream<Map<String, dynamic>> get messageUpdatedStream => _messageUpdatedStreamController.stream;
+  Stream<List<Map<String, dynamic>>> get typingStream => _typingStreamController.stream;
+  Stream<List<String>> get onlineUsersStream => _onlineUsersStreamController.stream;
+  
+  // Call streams
+  Stream<Map<String, dynamic>> get incomingCallStream => _incomingCallStreamController.stream;
+  Stream<Map<String, dynamic>> get callStartedStream => _callStartedStreamController.stream;
+  Stream<Map<String, dynamic>> get userJoinedCallStream => _userJoinedCallStreamController.stream;
+  Stream<Map<String, dynamic>> get userLeftCallStream => _userLeftCallStreamController.stream;
+  Stream<Map<String, dynamic>> get callEndedStream => _callEndedStreamController.stream;
+  Stream<Map<String, dynamic>> get callErrorStream => _callErrorStreamController.stream;
+
+  // Connection state callbacks (keep these for simple notifications)
   Function()? onConnected;
   Function()? onDisconnected;
   Function(String error)? onError;
+
+  // ✅ CRITICAL: Track if listeners are registered (ONCE per socket lifecycle)
+  bool _listenersRegistered = false;
 
   // Connect to socket with enhanced error handling
   Future<void> connect(String token) async {
@@ -51,23 +82,21 @@ class SocketRepository {
       if (_socket != null) {
         _socket!.dispose();
         _socket = null;
+        _listenersRegistered = false; // ✅ Reset listener flag
       }
 
       _socket = IO.io(
         AppConstants.socketUrl,
         IO.OptionBuilder()
-            .setTransports([
-              'websocket',
-              'polling',
-            ]) // Try WebSocket first, fallback to polling
+            .setTransports(['websocket', 'polling'])
             .enableAutoConnect()
             .setAuth({'token': token})
-            .setTimeout(30000) // 30 second timeout
+            .setTimeout(30000)
             .enableReconnection()
             .setReconnectionAttempts(5)
             .setReconnectionDelay(2000)
             .setReconnectionDelayMax(10000)
-            .enableForceNew() // Force new connection
+            .enableForceNew()
             .build(),
       );
 
@@ -96,11 +125,9 @@ class SocketRepository {
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       print('✅ Socket connected successfully!');
       print('   Socket ID: ${_socket!.id}');
-      print(
-        '   Transport: ${_socket!.io.engine?.transport?.name ?? "unknown"}',
-      );
+      print('   Transport: ${_socket!.io.engine?.transport?.name ?? "unknown"}');
 
-      // ✅ ADD THIS: Re-join room after reconnect
+      // ✅ Re-join room after reconnect
       if (_currentRoomId != null) {
         print('🔄 Re-joining room after reconnect: $_currentRoomId');
         Future.delayed(Duration(milliseconds: 100), () {
@@ -134,7 +161,7 @@ class SocketRepository {
       print('🔄 Socket reconnected!');
       print('   After attempts: $attempt');
 
-      // ✅ ADD THIS: Re-join room after reconnect
+      // ✅ Re-join room after reconnect
       if (_currentRoomId != null) {
         print('🔄 Re-joining room: $_currentRoomId');
         Future.delayed(Duration(milliseconds: 100), () {
@@ -173,11 +200,162 @@ class SocketRepository {
     _socket!.on('error', (data) {
       print('❌ Backend error: $data');
     });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ✅ REGISTER EVENT LISTENERS ONCE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    _registerEventListeners();
+  }
+
+  void _registerEventListeners() {
+    if (_listenersRegistered) {
+      print('⚠️ Event listeners already registered, skipping');
+      return;
+    }
+
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('📝 Registering socket event listeners (ONCE)');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    // ✅ MESSAGE EVENTS
+    _socket!.on(AppConstants.receiveMessageEvent, (data) {
+      print('📨 Socket event: receiveMessage');
+      try {
+        final messageData = _normalizeData(data);
+        _messageStreamController.add(messageData);
+        print('✅ Message added to stream');
+      } catch (e) {
+        print('❌ Error in message listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.messageDeletedEvent, (data) {
+      print('🗑️ Socket event: messageDeleted');
+      try {
+        final deleteData = _normalizeData(data);
+        _messageDeletedStreamController.add(deleteData);
+        print('✅ Delete event added to stream');
+      } catch (e) {
+        print('❌ Error in delete listener: $e');
+      }
+    });
+
+    _socket!.on('messageUpdated', (data) {
+      print('🔄 Socket event: messageUpdated');
+      try {
+        final updateData = _normalizeData(data);
+        _messageUpdatedStreamController.add(updateData);
+        print('✅ Update event added to stream');
+      } catch (e) {
+        print('❌ Error in update listener: $e');
+      }
+    });
+
+    // ✅ TYPING & ONLINE USERS
+    _socket!.on(AppConstants.typingUpdateEvent, (data) {
+      try {
+        if (data is Map<String, dynamic> && data.containsKey('typingUsers')) {
+          final typingUsers = (data['typingUsers'] as List)
+              .map((user) => Map<String, dynamic>.from(user as Map))
+              .toList();
+          _typingStreamController.add(typingUsers);
+        }
+      } catch (e) {
+        print('❌ Error in typing listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.onlineUsersEvent, (data) {
+      try {
+        final users = (data as List).map((e) => e.toString()).toList();
+        _onlineUsersStreamController.add(users);
+      } catch (e) {
+        print('❌ Error in online users listener: $e');
+      }
+    });
+
+    // ✅ CALL EVENTS
+    _socket!.on(AppConstants.incomingCallEvent, (data) {
+      print('📞 Socket event: incoming_call');
+      try {
+        final callData = _normalizeData(data);
+        _incomingCallStreamController.add(callData);
+        print('✅ Incoming call added to stream');
+      } catch (e) {
+        print('❌ Error in incoming call listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.callStartedEvent, (data) {
+      print('📞 Socket event: call_started');
+      try {
+        final callData = _normalizeData(data);
+        _callStartedStreamController.add(callData);
+      } catch (e) {
+        print('❌ Error in call started listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.userJoinedCallEvent, (data) {
+      print('✅ Socket event: user_joined_call');
+      try {
+        final callData = _normalizeData(data);
+        _userJoinedCallStreamController.add(callData);
+      } catch (e) {
+        print('❌ Error in user joined listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.userLeftCallEvent, (data) {
+      print('🚪 Socket event: user_left_call');
+      try {
+        final callData = _normalizeData(data);
+        _userLeftCallStreamController.add(callData);
+      } catch (e) {
+        print('❌ Error in user left listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.callEndedEvent, (data) {
+      print('🏁 Socket event: call_ended');
+      try {
+        final callData = _normalizeData(data);
+        _callEndedStreamController.add(callData);
+      } catch (e) {
+        print('❌ Error in call ended listener: $e');
+      }
+    });
+
+    _socket!.on(AppConstants.callErrorEvent, (data) {
+      print('❌ Socket event: call_error');
+      try {
+        final errorData = _normalizeData(data);
+        _callErrorStreamController.add(errorData);
+      } catch (e) {
+        print('❌ Error in call error listener: $e');
+      }
+    });
+
+    _listenersRegistered = true;
+    print('✅ All event listeners registered successfully');
+    print('   These listeners will persist for socket lifetime');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }
+
+  // ✅ Helper to normalize socket data to Map<String, dynamic>
+  Map<String, dynamic> _normalizeData(dynamic data) {
+    if (data is Map<String, dynamic>) {
+      return data;
+    } else if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    } else {
+      throw Exception('Unexpected data type: ${data.runtimeType}');
+    }
   }
 
   Future<void> _waitForConnection() async {
     int attempts = 0;
-    const maxAttempts = 30; // 15 seconds total
+    const maxAttempts = 30;
 
     while (attempts < maxAttempts) {
       if (_socket?.connected == true) {
@@ -198,57 +376,41 @@ class SocketRepository {
       throw Exception('Socket connection timeout');
     }
   }
-void joinRoom(String roomId) {
-  final joinTime = DateTime.now();
-  
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  print('📍 JOIN ROOM REQUEST');
-  print('   Room ID: $roomId');
-  print('   Time: ${joinTime.toIso8601String()}');
-  print('   Socket Exists: ${_socket != null}');
-  print('   Socket Connected: ${_socket?.connected}');
-  print('   Socket ID: ${_socket?.id}');
-  print('   Previous Room: $_currentRoomId');
-  
-  if (_socket == null || !_socket!.connected) {
-    print('❌ Cannot join room - socket not connected');
+
+  void joinRoom(String roomId) {
+    final joinTime = DateTime.now();
+
     print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    return;
-  }
+    print('📍 JOIN ROOM REQUEST');
+    print('   Room ID: $roomId');
+    print('   Time: ${joinTime.toIso8601String()}');
+    print('   Socket Connected: ${_socket?.connected}');
+    print('   Previous Room: $_currentRoomId');
 
-  // ✅ CRITICAL FIX: Client-side leave/rejoin to reset Socket.IO state
-  if (_currentRoomId == roomId) {
-    print('🔄 Same room - forcing client rejoin to reset state');
-    print('   Current room: $_currentRoomId');
-    
-    // Force client to leave current room
-    _socket!.emit('leaveRoom', roomId);
-    
-    // Small delay to ensure leave is processed
-    Future.delayed(Duration(milliseconds: 50), () {
-      // Now rejoin
-      _socket!.emit(AppConstants.joinRoomEvent, roomId);
-      print('✅ Forced rejoin completed for: $roomId');
-    });
-    
+    if (_socket == null || !_socket!.connected) {
+      print('❌ Cannot join room - socket not connected');
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
+
+    // Force leave/rejoin to reset Socket.IO state
+    if (_currentRoomId == roomId) {
+      print('🔄 Same room - forcing rejoin to reset state');
+      _socket!.emit('leaveRoom', roomId);
+      Future.delayed(Duration(milliseconds: 50), () {
+        _socket!.emit(AppConstants.joinRoomEvent, roomId);
+        print('✅ Forced rejoin completed');
+      });
+      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
+
+    _currentRoomId = roomId;
+    _socket!.emit(AppConstants.joinRoomEvent, roomId);
+
+    print('✅ joinRoom event emitted');
     print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    return;
   }
-
-  final previousRoom = _currentRoomId;
-  _currentRoomId = roomId;
-
-  print('✅ Emitting joinRoom event');
-  print('   From: ${previousRoom ?? 'none'}');
-  print('   To: $roomId');
-  
-  _socket!.emit(AppConstants.joinRoomEvent, roomId);
-  
-  print('✅ joinRoom event emitted');
-  print('   Socket ID: ${_socket!.id}');
-  print('   Timestamp: ${DateTime.now().toIso8601String()}');
-  print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-}
 
   Future<void> sendMessage(
     String roomId,
@@ -266,38 +428,25 @@ void joinRoom(String roomId) {
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     };
 
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('📤 Attempting to send message');
-    print('   Socket exists: ${_socket != null}');
-    print('   Socket connected: ${_socket?.connected}');
-    print('   Room: $roomId');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('📤 Sending message to room: $roomId');
 
-    // If not connected, queue the message and try to reconnect
     if (_socket == null || !_socket!.connected) {
       print('⚠️ Socket not connected, queuing message...');
       _pendingMessages.add(messageData);
-      print('📦 Message queued (${_pendingMessages.length} pending)');
-
-      // Try to reconnect
+      
       if (_lastToken != null) {
-        print('🔄 Attempting reconnection...');
         try {
           await ensureConnected();
-          // If reconnection successful, pending messages will be sent automatically
         } catch (e) {
           print('❌ Reconnection failed: $e');
-          throw Exception('Socket not connected and reconnection failed');
+          throw Exception('Socket not connected');
         }
-      } else {
-        throw Exception('Socket not connected and no token available');
       }
       return;
     }
 
-    // Socket is connected, send immediately
     _socket!.emit(AppConstants.sendMessageEvent, messageData);
-    print('✅ Message emitted successfully');
+    print('✅ Message emitted');
   }
 
   Future<void> _sendPendingMessages() async {
@@ -306,21 +455,12 @@ void joinRoom(String roomId) {
     _isSendingPending = true;
 
     try {
-      print('📤 Sending ${_pendingMessages.length} pending messages...');
-
       while (_pendingMessages.isNotEmpty && _socket?.connected == true) {
         final messageData = _pendingMessages.removeAt(0);
-
         _socket!.emit(AppConstants.sendMessageEvent, messageData);
-        print('   ✅ Sent pending message');
-
-        // Small delay between messages
         await Future.delayed(Duration(milliseconds: 100));
       }
-
       print('✅ All pending messages sent');
-    } catch (e) {
-      print('❌ Error sending pending messages: $e');
     } finally {
       _isSendingPending = false;
     }
@@ -328,27 +468,17 @@ void joinRoom(String roomId) {
 
   void deleteMessage(String messageId, String roomId) {
     if (_socket == null || !_socket!.connected) {
-      print('⚠️ Cannot delete message - socket not connected');
       throw Exception('Socket not connected');
     }
-
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('🗑️ Deleting message: $messageId in room: $roomId');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     _socket!.emit(AppConstants.deleteMessageEvent, {
       'messageId': messageId,
       'roomId': roomId,
     });
-
-    print('✅ Delete message emitted');
   }
 
   void sendTypingStatus(String roomId, bool isTyping) {
-    if (_socket == null || !_socket!.connected) {
-      // Silently fail for typing indicator
-      return;
-    }
+    if (_socket == null || !_socket!.connected) return;
 
     _socket!.emit(AppConstants.typingEvent, {
       'roomId': roomId,
@@ -356,13 +486,14 @@ void joinRoom(String roomId) {
     });
   }
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // CALL METHODS
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   void startCall(String roomId, String callType) {
     if (_socket == null || !_socket!.connected) {
-      print('⚠️ Cannot start call - socket not connected');
       throw Exception('Socket not connected');
     }
 
-    print('📞 Starting $callType call in room: $roomId');
     _socket!.emit(AppConstants.startCallEvent, {
       'roomId': roomId,
       'callType': callType,
@@ -371,11 +502,9 @@ void joinRoom(String roomId) {
 
   void joinCall(String roomId, String callId) {
     if (_socket == null || !_socket!.connected) {
-      print('⚠️ Cannot join call - socket not connected');
       throw Exception('Socket not connected');
     }
 
-    print('✅ Joining call: $callId in room: $roomId');
     _socket!.emit(AppConstants.joinCallEvent, {
       'roomId': roomId,
       'callId': callId,
@@ -385,7 +514,6 @@ void joinRoom(String roomId) {
   void rejectCall(String roomId, String callId) {
     if (_socket == null || !_socket!.connected) return;
 
-    print('❌ Rejecting call: $callId');
     _socket!.emit(AppConstants.rejectCallEvent, {
       'roomId': roomId,
       'callId': callId,
@@ -395,7 +523,6 @@ void joinRoom(String roomId) {
   void leaveCall(String roomId, String callId) {
     if (_socket == null || !_socket!.connected) return;
 
-    print('🚪 Leaving call: $callId');
     _socket!.emit(AppConstants.leaveCallEvent, {
       'roomId': roomId,
       'callId': callId,
@@ -420,311 +547,53 @@ void joinRoom(String roomId) {
     });
   }
 
-  // ✅ CALL EVENT LISTENERS
-
-  void onIncomingCall(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.incomingCallEvent, (data) {
-      print('📞 INCOMING CALL EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onIncomingCall: $e');
-      }
-    });
-  }
-
-  void onCallStarted(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.callStartedEvent, (data) {
-      print('📞 CALL STARTED EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onCallStarted: $e');
-      }
-    });
-  }
-
-  void onUserJoinedCall(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.userJoinedCallEvent, (data) {
-      print('✅ USER JOINED CALL EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onUserJoinedCall: $e');
-      }
-    });
-  }
-
-  void onUserLeftCall(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.userLeftCallEvent, (data) {
-      print('🚪 USER LEFT CALL EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onUserLeftCall: $e');
-      }
-    });
-  }
-
-  void onCallEnded(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.callEndedEvent, (data) {
-      print('🏁 CALL ENDED EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onCallEnded: $e');
-      }
-    });
-  }
-
-  void onCallError(Function(Map<String, dynamic>) callback) {
-    _socket?.on(AppConstants.callErrorEvent, (data) {
-      print('❌ CALL ERROR EVENT');
-      try {
-        final callData = data is Map<String, dynamic>
-            ? data
-            : Map<String, dynamic>.from(data as Map);
-        callback(callData);
-      } catch (e) {
-        print('❌ Error in onCallError: $e');
-      }
-    });
-  }
-
-  void onReceiveMessage(Function(Map<String, dynamic>) callback) {
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('👂 SOCKET LISTENER REGISTRATION REQUEST');
-    print('   Already registered: $_messageListenerRegistered');
-    print('   Socket exists: ${_socket != null}');
-    print('   Socket connected: ${_socket?.connected}');
-
-    // ✅ CRITICAL FIX: Only register listener ONCE per socket connection
-    if (_messageListenerRegistered) {
-      print('⚠️ Listener already registered, updating callback only');
-      _messageCallback = callback;
-      print('✅ Callback updated successfully');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      return;
-    }
-
-    print('📝 Registering NEW listener (first time for this socket)');
-    print('   Event: ${AppConstants.receiveMessageEvent}');
-    print('   Socket ID: ${_socket?.id}');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-    // Store the callback
-    _messageCallback = callback;
-
-    // Register the listener ONCE
-    _socket?.on(AppConstants.receiveMessageEvent, (data) {
-      final receiveTime = DateTime.now();
-
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('📨 SOCKET EVENT RECEIVED');
-      print('   Event: ${AppConstants.receiveMessageEvent}');
-      print('   Time: ${receiveTime.toIso8601String()}');
-      print('   Socket ID: ${_socket?.id}');
-      print('   Data Type: ${data.runtimeType}');
-      print('   Message Text: ${data is Map ? data['text'] : 'N/A'}');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-      try {
-        Map<String, dynamic> messageData;
-
-        if (data is Map<String, dynamic>) {
-          messageData = data;
-        } else if (data is Map) {
-          messageData = Map<String, dynamic>.from(data);
-        } else {
-          print('❌ UNEXPECTED DATA TYPE: ${data.runtimeType}');
-          print('   Raw Data: $data');
-          print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-          return;
-        }
-
-        print('✅ Data validated, calling callback...');
-
-        // Call the CURRENT callback (which may have been updated)
-        if (_messageCallback != null) {
-          _messageCallback!(messageData);
-          print('✅ Callback completed successfully');
-        } else {
-          print('⚠️ No callback registered!');
-        }
-
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      } catch (e, stackTrace) {
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        print('❌ SOCKET LISTENER ERROR');
-        print('   Error: $e');
-        print('   Stack: $stackTrace');
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      }
-    });
-
-    _messageListenerRegistered = true;
-    print('✅ Socket listener registered successfully (ONCE)');
-    print('   This listener will persist for the socket lifetime');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  }
-
-  void onMessageDeleted(Function(Map<String, dynamic>) callback) {
-    print('👂 Setting up messageDeleted listener');
-
-    _socket?.on(AppConstants.messageDeletedEvent, (data) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🗑️ MESSAGE DELETED EVENT');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-      try {
-        Map<String, dynamic> deleteData;
-
-        if (data is Map<String, dynamic>) {
-          deleteData = data;
-        } else if (data is Map) {
-          deleteData = Map<String, dynamic>.from(data);
-        } else {
-          print('❌ Unexpected data type: ${data.runtimeType}');
-          return;
-        }
-
-        callback(deleteData);
-      } catch (e, stackTrace) {
-        print('❌ Error in onMessageDeleted: $e');
-        print('Stack trace: $stackTrace');
-      }
-    });
-  }
-
-   void onMessageUpdated(Function(Map<String, dynamic>) callback) {
-    print('👂 Setting up messageUpdated listener');
-
-    _socket?.on('messageUpdated', (data) {
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('🔄 MESSAGE UPDATED EVENT');
-      print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-      try {
-        Map<String, dynamic> updateData;
-
-        if (data is Map<String, dynamic>) {
-          updateData = data;
-        } else if (data is Map) {
-          updateData = Map<String, dynamic>.from(data);
-        } else {
-          print('❌ Unexpected data type: ${data.runtimeType}');
-          return;
-        }
-
-        print('   Message ID: ${updateData['_id']}');
-        print('   Message Type: ${updateData['messageType']}');
-        
-        if (updateData['callData'] != null) {
-          print('   Call Status: ${updateData['callData']['status']}');
-          print('   Call Duration: ${updateData['callData']['duration']}');
-        }
-
-        callback(updateData);
-      } catch (e, stackTrace) {
-        print('❌ Error in onMessageUpdated: $e');
-        print('Stack trace: $stackTrace');
-      }
-    });
-  }
-
-  void onTypingUpdate(Function(List<Map<String, dynamic>>) callback) {
-    print('👂 Setting up typingUpdate listener');
-
-    _socket?.on(AppConstants.typingUpdateEvent, (data) {
-      try {
-        if (data is Map<String, dynamic> && data.containsKey('typingUsers')) {
-          final typingUsers = data['typingUsers'] as List;
-          final users = typingUsers
-              .map((user) => Map<String, dynamic>.from(user as Map))
-              .toList();
-
-          callback(users);
-        }
-      } catch (e, stackTrace) {
-        print('❌ Error in onTypingUpdate: $e');
-        print('Stack trace: $stackTrace');
-      }
-    });
-  }
-
-  void onOnlineUsers(Function(List<String>) callback) {
-    _socket?.on(AppConstants.onlineUsersEvent, (data) {
-      print('👥 Online users event received: $data');
-      final users = (data as List).map((e) => e.toString()).toList();
-      callback(users);
-    });
-  }
-
   bool get isConnected => _socket?.connected ?? false;
 
   int get pendingMessageCount => _pendingMessages.length;
 
   Future<void> ensureConnected() async {
     if (_socket == null || _lastToken == null) {
-      print('❌ Socket is null or no token - cannot reconnect');
       throw Exception('Socket not initialized. Call connect() first.');
     }
 
     if (_socket!.connected) {
-      print('✅ Socket is already connected');
       return;
     }
 
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('🔄 Socket not connected, reconnecting...');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-    // Try to reconnect with last token
-    try {
-      await connect(_lastToken!);
-      print('✅ Reconnection successful');
-    } catch (e) {
-      print('❌ Reconnection failed: $e');
-      throw Exception('Socket reconnection failed: $e');
-    }
+    await connect(_lastToken!);
   }
 
   void disconnect() {
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     print('🔌 Disconnecting socket...');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     _currentRoomId = null;
-
-    // ✅ ADD THESE TWO LINES:
-    _messageListenerRegistered = false;
-    _messageCallback = null;
+    _listenersRegistered = false;
 
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
     _isConnecting = false;
 
-    print('✅ Socket disconnected and disposed');
+    print('✅ Socket disconnected');
   }
 
   void clearPendingMessages() {
-    print('🧹 Clearing ${_pendingMessages.length} pending messages');
     _pendingMessages.clear();
+  }
+
+  // ✅ Dispose streams when repository is disposed
+  void dispose() {
+    _messageStreamController.close();
+    _messageDeletedStreamController.close();
+    _messageUpdatedStreamController.close();
+    _typingStreamController.close();
+    _onlineUsersStreamController.close();
+    _incomingCallStreamController.close();
+    _callStartedStreamController.close();
+    _userJoinedCallStreamController.close();
+    _userLeftCallStreamController.close();
+    _callEndedStreamController.close();
+    _callErrorStreamController.close();
+    disconnect();
   }
 }

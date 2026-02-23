@@ -1,3 +1,4 @@
+import 'package:baatkaro/core/utils/dio_error_helper.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/constants/app_constants.dart';
 
@@ -18,7 +19,7 @@ class CallRepository {
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
       print('❌ Error checking active call: $e');
-      throw Exception('Failed to check active call: ${_handleError(e)}');
+      throw Exception('Failed to check active call: ${dioErrorMessage(e)}');
     }
   }
 
@@ -37,7 +38,7 @@ class CallRepository {
       return calls;
     } on DioException catch (e) {
       print('❌ Error fetching active calls: $e');
-      throw Exception('Failed to fetch active calls: ${_handleError(e)}');
+      throw Exception('Failed to fetch active calls: ${dioErrorMessage(e)}');
     }
   }
 
@@ -53,7 +54,7 @@ class CallRepository {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
@@ -65,23 +66,8 @@ class CallRepository {
       );
       return response.data as List<dynamic>;
     } on DioException catch (e) {
-      throw Exception(_handleError(e));
+      throw Exception(dioErrorMessage(e));
     }
   }
 
-  String _handleError(DioException e) {
-    if (e.response?.data != null && e.response?.data['message'] != null) {
-      return e.response!.data['message'];
-    }
-    if (e.response?.statusCode == 404) {
-      return 'Not found';
-    } else if (e.response?.statusCode == 401) {
-      return 'Unauthorized';
-    } else if (e.response?.statusCode == 403) {
-      return 'Access denied';
-    } else if (e.type == DioExceptionType.connectionTimeout) {
-      return 'Connection timeout';
-    }
-    return e.message ?? 'Unknown error occurred';
-  }
 }

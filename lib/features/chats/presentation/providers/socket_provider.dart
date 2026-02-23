@@ -1,5 +1,7 @@
 // features/chats/presentation/providers/socket_provider.dart
+// ✅ FIXED: Works with new stream-based SocketRepository
 
+import 'dart:async';
 import 'package:baatkaro/core/constants/app_constants.dart';
 import 'package:baatkaro/features/chats/data/models/message_model.dart';
 import 'package:baatkaro/features/chats/data/repositories/socket_repository.dart';
@@ -45,7 +47,47 @@ class SocketController extends StateNotifier<SocketState> {
   final Ref _ref;
   bool _isDisposed = false;
 
-  SocketController(this._repository, this._ref) : super(SocketState());
+  // ✅ Stream subscriptions for typing and online users
+  StreamSubscription<List<Map<String, dynamic>>>? _typingSubscription;
+  StreamSubscription<List<String>>? _onlineUsersSubscription;
+
+  SocketController(this._repository, this._ref) : super(SocketState()) {
+    _setupGlobalSubscriptions();
+  }
+
+  // ✅ Setup subscriptions for global events (typing, online users)
+  void _setupGlobalSubscriptions() {
+    print('📡 Setting up global socket subscriptions');
+
+    // Subscribe to typing updates
+    _typingSubscription = _repository.typingStream.listen(
+      (typingUsersData) {
+        if (_isDisposed) return;
+        print('⌨️ Typing users updated: ${typingUsersData.length} users');
+        final typingUsers = typingUsersData
+            .map((data) => TypingUser.fromJson(data))
+            .toList();
+        state = state.copyWith(typingUsers: typingUsers);
+      },
+      onError: (error) {
+        print('❌ Typing stream error: $error');
+      },
+    );
+
+    // Subscribe to online users
+    _onlineUsersSubscription = _repository.onlineUsersStream.listen(
+      (users) {
+        if (_isDisposed) return;
+        print('👥 Online users updated: ${users.length} users');
+        state = state.copyWith(onlineUsers: users.toSet());
+      },
+      onError: (error) {
+        print('❌ Online users stream error: $error');
+      },
+    );
+
+    print('✅ Global subscriptions setup complete');
+  }
 
   Future<void> connect() async {
     if (_isDisposed || state.isConnected) {
@@ -56,7 +98,7 @@ class SocketController extends StateNotifier<SocketState> {
     try {
       print('🔌 Connecting to socket...');
 
-      // ✅ Get token
+      // Get token
       final prefs = await _ref.read(sharedPreferencesProvider.future);
       final token = prefs.getString(AppConstants.accessTokenKey);
 
@@ -71,25 +113,6 @@ class SocketController extends StateNotifier<SocketState> {
 
       // Connect with token
       await _repository.connect(token);
-
-      // Listen for online users
-      _repository.onOnlineUsers((users) {
-        print('👥 Online users updated: ${users.length} users');
-        if (!_isDisposed) {
-          state = state.copyWith(onlineUsers: users.toSet());
-        }
-      });
-
-      // Listen for typing updates
-      _repository.onTypingUpdate((typingUsersData) {
-        print('⌨️ Typing users updated: ${typingUsersData.length} users');
-        if (!_isDisposed) {
-          final typingUsers = typingUsersData
-              .map((data) => TypingUser.fromJson(data))
-              .toList();
-          state = state.copyWith(typingUsers: typingUsers);
-        }
-      });
 
       if (_isDisposed) return;
       state = state.copyWith(isConnected: true);
@@ -147,9 +170,6 @@ class SocketController extends StateNotifier<SocketState> {
 
     print('📤 Sending message...');
     print('   Room: $roomId');
-    print('   Text: $text');
-    print('   Image: $imageUrl');
-    print('   Voice: $voiceUrl');
 
     try {
       await _repository.sendMessage(
@@ -166,7 +186,6 @@ class SocketController extends StateNotifier<SocketState> {
     }
   }
 
-  // ✅ NEW: Delete message
   void deleteMessage(String messageId, String roomId) {
     if (_isDisposed) return;
 
@@ -181,41 +200,9 @@ class SocketController extends StateNotifier<SocketState> {
     }
   }
 
-  // ✅ NEW: Send typing status
   void sendTypingStatus(String roomId, bool isTyping) {
     if (_isDisposed) return;
     _repository.sendTypingStatus(roomId, isTyping);
-  }
-
-  void onReceiveMessage(Function(Map<String, dynamic>) callback) {
-    if (_isDisposed) return;
-    print('👂 Setting up message receiver');
-    _repository.onReceiveMessage((data) {
-      if (!_isDisposed) {
-        callback(data);
-      }
-    });
-  }
-
-  // ✅ NEW: Listen for message deleted
-  void onMessageDeleted(Function(Map<String, dynamic>) callback) {
-    if (_isDisposed) return;
-    print('👂 Setting up message deleted receiver');
-    _repository.onMessageDeleted((data) {
-      if (!_isDisposed) {
-        callback(data);
-      }
-    });
-  }
-
-  void onMessageUpdated(Function(Map<String, dynamic>) callback) {
-    if (_isDisposed) return;
-    print('👂 Setting up message updated receiver');
-    _repository.onMessageUpdated((data) {
-      if (!_isDisposed) {
-        callback(data);
-      }
-    });
   }
 
   void disconnect() {
@@ -227,9 +214,19 @@ class SocketController extends StateNotifier<SocketState> {
 
   @override
   void dispose() {
-    print('🗑️ Disposing socket controller');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🗑️ Disposing SocketController');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
     _isDisposed = true;
+
+    // Cancel stream subscriptions
+    _typingSubscription?.cancel();
+    _onlineUsersSubscription?.cancel();
+
     _repository.disconnect();
+
+    print('✅ SocketController disposed');
     super.dispose();
   }
 }

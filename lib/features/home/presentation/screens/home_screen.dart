@@ -56,34 +56,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     notificationService.onIncomingCall = (callData) {
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      print('📞 FCM call notification received');
+      print('📞 Incoming call received (FCM or socket)');
       print('   Call ID: ${callData['callId']}');
       print('   Room ID: ${callData['roomId']}');
       print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-      // ✅ Give socket time to receive and populate activeCallsProvider
-      Future.delayed(Duration(milliseconds: 1000), () {
+      // FCM payload (flat callerName/callerId): add to activeCallsProvider so listener shows screen
+      if (callData['callerName'] != null && callData['callerId'] != null) {
+        final call = CallModel.fromFcmData(Map<String, dynamic>.from(callData));
+        if (call != null && !_shownCallIds.contains(call.id)) {
+          print('   📱 Adding call from FCM to activeCallsProvider');
+          ref.read(activeCallsProvider.notifier).update((state) => {...state, call.roomId: call});
+        }
+        return;
+      }
+
+      // Socket payload (nested caller): socket already updates activeCallsProvider; give it time then show if found
+      Future.delayed(Duration(milliseconds: 800), () {
         if (!mounted) return;
 
         final activeCalls = ref.read(activeCallsProvider);
-        final roomId = callData['roomId'];
+        final roomId = callData['roomId']?.toString();
 
-        print('   Active calls after delay: ${activeCalls.keys.toList()}');
-
-        if (activeCalls.containsKey(roomId)) {
+        if (roomId != null && activeCalls.containsKey(roomId)) {
           final call = activeCalls[roomId]!;
-          print('   ✅ Call found in activeCallsProvider');
-          
-          // Check if not already shown
           if (!_shownCallIds.contains(call.id)) {
-            print('   📱 Showing incoming call screen from FCM');
+            print('   📱 Showing incoming call screen (from socket)');
             _showIncomingCallScreen(call);
-          } else {
-            print('   ⏭️ Call already shown, skipping');
           }
-        } else {
-          print('   ⚠️ Call not found in activeCallsProvider');
-          print('   This is normal if call was already answered/rejected');
         }
       });
     };

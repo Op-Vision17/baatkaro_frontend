@@ -1,11 +1,13 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class AppConstants {
-  // Base URLs
-  static const String baseUrl = 'https://api.visiontrix.me';
-  static const String socketUrl = 'https://api.visiontrix.me';
+  // Base URLs (from .env; fallback for production)
+  static String get baseUrl =>
+      dotenv.env['BASE_URL'] ?? 'https://api.visiontrix.me';
+  static String get socketUrl =>
+      dotenv.env['SOCKET_URL'] ?? 'https://api.visiontrix.me';
 
-static String get agoraAppId => dotenv.env['AGORA_APP_ID'] ?? '';
+  static String get agoraAppId => dotenv.env['AGORA_APP_ID'] ?? '';
 
   // Auth API Endpoints
   static const String sendOtpEndpoint = '/api/auth/send-otp';
@@ -20,6 +22,12 @@ static String get agoraAppId => dotenv.env['AGORA_APP_ID'] ?? '';
   static const String createRoomEndpoint = '/api/room/create';
   static const String joinRoomEndpoint = '/api/room/join';
   static const String myRoomsEndpoint = '/api/room/my-rooms';
+
+  /// Room-scoped paths (use with roomId)
+  static String roomDetailEndpoint(String roomId) => '/api/room/$roomId';
+  static String roomMessagesEndpoint(String roomId) =>
+      '/api/room/$roomId/messages';
+  static String roomLeaveEndpoint(String roomId) => '/api/room/$roomId/leave';
 
   // Upload API Endpoints
   static const String uploadImageEndpoint = '/api/upload/image';
@@ -44,9 +52,6 @@ static String get agoraAppId => dotenv.env['AGORA_APP_ID'] ?? '';
   static const String userNameKey = 'userName';
   static const String userEmailKey = 'userEmail';
   static const String needsOnboardingKey = 'needs_onboarding';
-
-  // Deprecated - for backward compatibility
-  static const String tokenKey = 'access_token';
 
   // Timeouts
   static const Duration apiTimeout = Duration(seconds: 30);

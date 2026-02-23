@@ -29,10 +29,10 @@ class RoomCodeShareCard extends StatelessWidget {
 
   void _shareRoomCode() {
     Share.share(
-      '🎉 Join my room "$roomName" on Baatkro!\n\n'
+      '🎉 Join my room "$roomName" on Baatkaro!\n\n'
       '📱 Room Code: $roomCode\n\n'
       'Enter this code in the app to join the chat!',
-      subject: 'Join my Baatkro room',
+      subject: 'Join my Baatkaro room',
     );
   }
 

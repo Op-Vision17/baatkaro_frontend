@@ -35,11 +35,49 @@ class CallModel {
               .toList() ??
           [],
       status: json['status'] ?? 'ringing',
-      startTime: DateTime.parse(json['startTime'] ?? json['timestamp']),
+      startTime: _parseStartTime(json['startTime'] ?? json['timestamp']),
       endTime:
           json['endTime'] != null ? DateTime.parse(json['endTime']) : null,
       duration: json['duration'],
     );
+  }
+
+  /// Build from FCM incoming_call payload (flat callerName/callerId/callerAvatar).
+  static CallModel? fromFcmData(Map<String, dynamic> data) {
+    final callerId = data['callerId']?.toString();
+    final callerName = data['callerName']?.toString();
+    if (callerId == null || callerName == null) return null;
+    final roomId = data['roomId']?.toString() ?? '';
+    final callId = data['callId']?.toString() ?? '';
+    if (roomId.isEmpty || callId.isEmpty) return null;
+    final startTime = _parseStartTime(data['timestamp']);
+    return CallModel(
+      id: callId,
+      roomId: roomId,
+      roomName: data['roomName']?.toString() ?? 'Group Call',
+      callType: data['callType']?.toString() ?? 'audio',
+      caller: CallUser(
+        id: callerId,
+        name: callerName,
+        avatar: data['callerAvatar']?.toString(),
+        email: null,
+      ),
+      participants: [],
+      status: 'ringing',
+      startTime: startTime,
+    );
+  }
+
+  static DateTime _parseStartTime(dynamic value) {
+    if (value == null) return DateTime.now();
+    if (value is String) {
+      final ms = int.tryParse(value);
+      if (ms != null) return DateTime.fromMillisecondsSinceEpoch(ms);
+      try {
+        return DateTime.parse(value);
+      } catch (_) {}
+    }
+    return DateTime.now();
   }
 }
 
