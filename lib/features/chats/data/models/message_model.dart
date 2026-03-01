@@ -169,6 +169,10 @@ class CallData {
   bool get isEnded => status == 'ended';
   bool get isMissed => status == 'missed';
 
+  /// True when the call can still be joined (ongoing, ringing, or just started).
+  bool get isJoinable =>
+      status == 'ongoing' || status == 'ringing' || status == 'started';
+
   String get durationText {
     if (duration == null) return '';
 
@@ -182,12 +186,22 @@ class CallData {
     }
   }
 
+  static String _idFromJson(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is Map) {
+      final v = value['\$oid'] ?? value['oid'] ?? value['id'];
+      if (v != null) return v.toString();
+    }
+    return value.toString();
+  }
+
   factory CallData.fromJson(Map<String, dynamic> json) {
     return CallData(
-      callId: json['callId']?.toString() ?? '',
+      callId: _idFromJson(json['callId']),
       callType: json['callType']?.toString() ?? 'audio',
       status: json['status']?.toString() ?? 'started',
-      initiatorId: json['initiatorId']?.toString() ?? '',
+      initiatorId: _idFromJson(json['initiatorId']),
       initiatorName: json['initiatorName']?.toString() ?? '',
       startTime: json['startTime'] != null
           ? DateTime.parse(json['startTime'].toString())

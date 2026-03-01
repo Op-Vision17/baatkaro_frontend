@@ -84,7 +84,7 @@ class CallMessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final callColor = _getCallColor(context);
-    final canJoin = message.callData?.isOngoing ?? false;
+    final canJoin = message.callData?.isJoinable ?? false;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),

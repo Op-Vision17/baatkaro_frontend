@@ -1260,9 +1260,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                   onDelete: isMe && message.canBeDeleted
                                       ? () => _deleteMessage(message.id)
                                       : null,
-                                  // ✅ NEW: Handle call message tap
-                                  onCallTap: message.isCallMessage && 
-                                             message.callData?.isOngoing == true
+                                  // ✅ Handle call message tap (allow join when call is ongoing, ringing, or started)
+                                  onCallTap: message.isCallMessage &&
+                                             (message.callData?.isJoinable ?? false)
                                       ? () => _joinCallFromMessage(message.callData!.callId)
                                       : null,
                                 ),
